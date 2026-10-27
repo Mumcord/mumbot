@@ -90,7 +90,7 @@ async fn wait_channel(admin: &Bot, room: &str) -> Result<u32> {
 }
 
 #[tokio::test]
-#[ignore = "needs testenv v15 and MUMBOT_LIVE=1"]
+#[ignore = "needs testenv and MUMBOT_LIVE=1"]
 async fn the_bot_uses_the_configured_channel_password() {
     if !live() {
         return;
@@ -126,6 +126,7 @@ async fn the_bot_uses_the_configured_channel_password() {
             &with_password,
             &UserCheck {
                 in_channel: Some(room.clone()),
+                ..Default::default()
             },
         )
         .await

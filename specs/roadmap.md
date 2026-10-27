@@ -8,6 +8,7 @@ Specs: `specs/{nr}-{name}-specification.md` per epic, created with the `/spec` s
 
 | Nr | Epic | Status | Spec |
 | --- | --- | --- | --- |
+| 0 | Test bot: the scripted `mumbot` CLI (chat, state, ACL helpers, `expect` checks, voice play/record/level checks) and the load generator, used by Mumcord's E2E and smoke tests | Built (carried over from Mumcord's `crates/bot`) | `specs/00-test-bot-carried-over.md` |
 | 1 | Webhook bot: messages from outside systems into a channel | Built (carried over from Mumcord, PR #51); packaging added in the move addendum | `specs/01-webhook-specification.md` |
 
 ## Candidate epics (not specified yet)
@@ -15,7 +16,7 @@ Specs: `specs/{nr}-{name}-specification.md` per epic, created with the `/spec` s
 Taken from the open and deferred points of Epic 1 (`specs/01-webhook-specification.md` §2.2 and §14, `specs/01-webhook-brainstorming.md`):
 
 - **Interactive bot** that reads chat and answers, e.g. commands (Q1.1).
-- **Text-to-speech or alert sounds** in a channel (Q1.4). Needs the audio path (Opus encoding, voice transmission), which the webhook bot deliberately leaves out.
+- **Text-to-speech or alert sounds** in a channel (Q1.4). The audio path (Opus encoding, voice transmission) now exists in the test bot (`src/voice/`); the webhook bot deliberately leaves it out.
 - **Multi-server bot**: one process serving several servers, or several bot identities (Q1.6).
 - **Richer delivery**: whisper/private messages, a message to a whole channel tree (Q1.3); per-request sender label as a message prefix (Q3.3, dropped from the MVP).
 - **Operations**: runtime key rotation without restart (Q2.5), a key generation command (Q2.4), built-in TLS for the HTTP side (Q2.8), IP allowlists (Q2.9), request queueing (Q3.5), file logging and a verbose mode (Q3.7), config formats other than TOML (Q3.4), a systemd unit (Q3.8; the Docker image now exists).
@@ -23,7 +24,8 @@ Taken from the open and deferred points of Epic 1 (`specs/01-webhook-specificati
 
 ## Open technical to-dos
 
-- **Switch `mumcord-protocol` to crates.io**: Mumcord plans to publish `mumcord-protocol` (first version 0.4.2). Once it is published, replace the git dependency in `Cargo.toml` with `mumcord-protocol = "0.4"` (a one-line change) and run the live tests. `mumcord-audio` is not needed by the webhook bot and is not planned for publishing; a talking bot (Q1.4) would need a decision on its audio code.
+- **Switch `mumcord-codec` to crates.io**: the test bot's voice uses `mumcord-codec` (the Opus codec split out of `mumcord-audio` without device I/O, so the static Linux builds need no ALSA), pinned to a commit of Mumcord PR #61 for now. Once `mumcord-codec` 0.4.2 is published, replace the git dependency in `Cargo.toml` with `mumcord-codec = "0.4"` and run the live and voice tests.
+- Done: `mumcord-protocol` comes from crates.io (`"0.4"`, first published version 0.4.2) instead of a git dependency.
 
 ## Carried over from Mumcord
 
@@ -42,6 +44,6 @@ Bot-related requirements, decisions and ideas found in the Mumcord client specs 
 - **Plugin-data features** (Mumcord-to-Mumcord, carried by any standard server): history sync, where Mumcord asks other clients for channel history (mumcord FR-1.60), suggesting a history/archive bot; full-size image fetch from the sender (mumcord FR-1.60c); "Now playing" with title, artist, cover and progress (mumcord FR-1.58, QA.40), suggesting a music bot that publishes its track; "Now gaming" status (mumcord FR-1.59); watch-party commands, shared playlist and host announce (mumcord FR-2.39, FR-2.40, FR-2.69, FR-2.75), suggesting a playlist host or announcer bot; the P2P layer with plugin-data signalling and certificate-hash authentication (mumcord FR-2.35, FR-2.36). The list of plugin-data uses per server is in mumcord `specs/02-multi-server-themes-specification.md:257`. Using any of these needs the message formats from Mumcord's code and a spec decision on compatibility when Mumcord changes them.
 - **No TTS in Mumcord**: Mumcord itself never uses text-to-speech (mumcord Q3.8 of Epic 1, AC-1.24), so TTS stays a bot-only idea (see Q1.4 above).
 
-### Not carried over
+### Test bot
 
-Mumcord's scripted test bot (`crates/bot` without the webhook part: `expect`, voice checks, ACL helpers, samples, the load test) is test tooling for Mumcord's E2E and smoke tests and stays in Mumcord.
+Mumcord's scripted test bot (`crates/bot` without the webhook part: `expect`, voice checks, ACL helpers, samples, the load test) moved into Mumbot as well; Mumcord's E2E and smoke tests will download the `mumbot` release binary. Its requirements, voice-check decisions, scale notes, tasks and acceptance criteria are in `specs/00-test-bot-carried-over.md`.

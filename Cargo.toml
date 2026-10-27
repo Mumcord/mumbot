@@ -1,6 +1,6 @@
 [package]
 name = "mumbot"
-description = "Headless Mumble bots for standard Mumble servers, starting with a webhook bot"
+description = "Headless Mumble bots for standard Mumble servers: a webhook bot and a scripted test bot"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.90"
@@ -9,10 +9,14 @@ repository = "https://github.com/Mumcord/mumbot"
 publish = false
 
 [dependencies]
-# Pinned to a release tag of the Mumcord client, so a protocol change there never breaks the bot
-# unnoticed; raise the tag deliberately. Becomes `mumcord-protocol = "0.4"` once it is on
-# crates.io (specs/roadmap.md, open technical to-dos).
-mumcord-protocol = { git = "https://github.com/Mumcord/mumcord", tag = "v0.4.2" }
+# Published by the Mumcord client project; a minor bump (by hand or Dependabot) must pass the
+# live tests. mumcord-codec (Opus without device I/O, so static builds need no ALSA) gives the
+# test bot's voice the same codec settings as the client. Pinned to a commit until it is on
+# crates.io, then `mumcord-codec = "0.4"` (specs/roadmap.md, open technical to-dos).
+mumcord-protocol = "0.4"
+mumcord-codec = { git = "https://github.com/Mumcord/mumcord", rev = "218cf164a49475b7821a48b41c9186e5a4b37c89" }
+bytes = "1"
+hound = "3.5"
 tokio = { version = "1.54", features = ["full"] }
 anyhow = "1"
 tracing = "0.1"

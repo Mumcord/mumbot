@@ -1,33 +1,95 @@
-//! Conditions over the observed server state, used by the `Bot::wait_*` helpers.
+//! Conditions over the observed server state, used by the `Bot::wait_*` helpers and the CLI's
+//! `expect` subcommand.
 
 use anyhow::{Result, anyhow, bail};
 use mumcord_protocol::{ServerState, TextMessage, User};
 
 /// Expected state of another user; unset fields are not checked.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, clap::Args)]
 pub struct UserCheck {
     /// Channel the user is in (name or `Root/Path/Name`).
+    #[arg(long = "in")]
     pub in_channel: Option<String>,
+    /// Muted (self or by an admin).
+    #[arg(long)]
+    pub muted: Option<bool>,
+    /// Deafened (self or by an admin).
+    #[arg(long)]
+    pub deaf: Option<bool>,
+    /// Channel the user listens to (ear icon).
+    #[arg(long)]
+    pub listening: Option<String>,
+    /// Channel the user does not listen to.
+    #[arg(long)]
+    pub not_listening: Option<String>,
+    /// Registered on the server.
+    #[arg(long)]
+    pub registered: Option<bool>,
+    /// Comment contains this text.
+    #[arg(long)]
+    pub comment_contains: Option<String>,
+    /// Has an avatar.
+    #[arg(long)]
+    pub has_avatar: Option<bool>,
+    /// Avatar equals these bytes (library use; the CLI fills it from `--avatar-file`).
+    #[arg(skip)]
+    pub avatar: Option<Vec<u8>>,
+    /// Certificate hash (SHA-1 hex).
+    #[arg(long)]
+    pub cert_hash: Option<String>,
 }
 
 impl UserCheck {
     pub fn matches(&self, user: &User, state: &ServerState) -> bool {
-        self.in_channel
-            .as_ref()
-            .is_none_or(|name| resolve_channel(state, name).is_ok_and(|id| id == user.channel_id))
+        let in_channel = |name: &Option<String>| {
+            name.as_ref()
+                .map(|n| resolve_channel(state, n).is_ok_and(|id| id == user.channel_id))
+        };
+        let listens = |name: &Option<String>| {
+            name.as_ref()
+                .map(|n| resolve_channel(state, n).is_ok_and(|id| user.listening.contains(&id)))
+        };
+        in_channel(&self.in_channel).unwrap_or(true)
+            && self
+                .muted
+                .is_none_or(|m| (user.mute || user.self_mute) == m)
+            && self.deaf.is_none_or(|d| (user.deaf || user.self_deaf) == d)
+            && listens(&self.listening).unwrap_or(true)
+            && listens(&self.not_listening).is_none_or(|l| !l)
+            && self.registered.is_none_or(|r| user.user_id.is_some() == r)
+            && self.comment_contains.as_ref().is_none_or(|text| {
+                user.comment
+                    .as_ref()
+                    .is_some_and(|c| c.contains(text.as_str()))
+            })
+            && self
+                .has_avatar
+                .is_none_or(|a| (user.texture.is_some() || user.texture_hash.is_some()) == a)
+            && self
+                .avatar
+                .as_ref()
+                .is_none_or(|bytes| user.texture.as_ref() == Some(bytes))
+            && self
+                .cert_hash
+                .as_ref()
+                .is_none_or(|h| user.cert_hash.as_ref() == Some(h))
     }
 }
 
 /// Expected received text message; unset fields are not checked.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, clap::Args)]
 pub struct MessageCheck {
     /// Sender's user name.
+    #[arg(long)]
     pub from: Option<String>,
     /// Message HTML contains this text.
+    #[arg(long)]
     pub contains: Option<String>,
     /// Sent privately to this bot (true) or to a channel (false).
+    #[arg(long)]
     pub private: Option<bool>,
     /// Sent to this channel.
+    #[arg(long)]
     pub channel: Option<String>,
 }
 
@@ -115,6 +177,10 @@ mod tests {
                 session: 7,
                 name: "alice".to_owned(),
                 channel_id: 1,
+                self_mute: true,
+                user_id: Some(3),
+                listening: [4].into(),
+                comment: Some("hello <b>world</b>".to_owned()),
                 ..Default::default()
             },
         );
@@ -133,15 +199,53 @@ mod tests {
     }
 
     #[test]
-    fn user_check_compares_the_channel() {
+    fn user_check_compares_each_field() {
         let s = state();
         let user = find_user(&s, "alice").expect("user");
-        let check = |channel: &str| UserCheck {
-            in_channel: Some(channel.into()),
+        let ok = UserCheck {
+            in_channel: Some("Lobby".into()),
+            muted: Some(true),
+            deaf: Some(false),
+            listening: Some("AFK".into()),
+            not_listening: Some("Root/Raid".into()),
+            registered: Some(true),
+            comment_contains: Some("<b>world".into()),
+            has_avatar: Some(false),
+            ..Default::default()
         };
-        assert!(check("Lobby").matches(user, &s));
-        assert!(!check("AFK").matches(user, &s));
-        assert!(UserCheck::default().matches(user, &s));
+        assert!(ok.matches(user, &s));
+        for bad in [
+            UserCheck {
+                in_channel: Some("AFK".into()),
+                ..Default::default()
+            },
+            UserCheck {
+                muted: Some(false),
+                ..Default::default()
+            },
+            UserCheck {
+                listening: Some("Lobby".into()),
+                ..Default::default()
+            },
+            UserCheck {
+                not_listening: Some("AFK".into()),
+                ..Default::default()
+            },
+            UserCheck {
+                registered: Some(false),
+                ..Default::default()
+            },
+            UserCheck {
+                comment_contains: Some("bye".into()),
+                ..Default::default()
+            },
+            UserCheck {
+                avatar: Some(vec![1]),
+                ..Default::default()
+            },
+        ] {
+            assert!(!bad.matches(user, &s), "{bad:?}");
+        }
     }
 
     #[test]

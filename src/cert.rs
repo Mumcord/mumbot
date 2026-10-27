@@ -11,9 +11,12 @@ use mumcord_protocol::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8Key
 const CERT_FILE: &str = "cert.der";
 const KEY_FILE: &str = "key.der";
 
-/// `MUMBOT_DATA`, else `$XDG_DATA_HOME/mumbot`, else `~/.local/share/mumbot`.
+/// `MUMBOT_DATA`, else `MUMCORD_BOT_DATA` (the name Mumcord's tests already set), else
+/// `$XDG_DATA_HOME/mumbot`, else `~/.local/share/mumbot`.
 pub fn default_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("MUMBOT_DATA") {
+    if let Some(dir) =
+        std::env::var_os("MUMBOT_DATA").or_else(|| std::env::var_os("MUMCORD_BOT_DATA"))
+    {
         return PathBuf::from(dir);
     }
     let data = std::env::var_os("XDG_DATA_HOME")

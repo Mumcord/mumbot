@@ -3,9 +3,14 @@
 # Rust build. The `:-` defaults keep a plain `docker build` (without buildx) working.
 FROM --platform=${BUILDPLATFORM:-linux/amd64} ghcr.io/rust-cross/cargo-zigbuild:0.24.0 AS build
 ARG TARGETARCH
+# The Opus codec (C, behind mumcord-audio) is built with CMake.
+RUN apt-get update -qq \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends cmake \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
+COPY assets ./assets
 RUN case "${TARGETARCH:-amd64}" in \
       amd64) target=x86_64-unknown-linux-musl ;; \
       arm64) target=aarch64-unknown-linux-musl ;; \
