@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use mumcord_audio::SAMPLE_RATE;
+use mumcord_codec::SAMPLE_RATE;
 
 /// Level reported for silence (and empty input), in dBFS.
 pub const SILENCE_DB: f32 = -120.0;

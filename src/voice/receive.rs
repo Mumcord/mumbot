@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-use mumcord_audio::FRAME_SAMPLES;
-use mumcord_audio::codec::{MAX_DECODED_SAMPLES, OpusDecoder};
+use mumcord_codec::FRAME_SAMPLES;
+use mumcord_codec::codec::{MAX_DECODED_SAMPLES, OpusDecoder};
 use mumcord_protocol::VoicePacket;
 
 use super::analysis::{duration_of, peak_window_db};
@@ -181,7 +181,7 @@ impl Inbox {
     /// ending at `to`; silence where nothing was received.
     pub fn render(&self, session: Option<u32>, from: Instant, to: Instant) -> Vec<f32> {
         let len = (to.saturating_duration_since(from).as_secs_f64()
-            * f64::from(mumcord_audio::SAMPLE_RATE)) as usize;
+            * f64::from(mumcord_codec::SAMPLE_RATE)) as usize;
         let mut out = vec![0.0; len];
         for (id, speaker) in &self.speakers {
             if session.is_some_and(|s| s != *id) {
@@ -192,7 +192,7 @@ impl Inbox {
                     continue;
                 }
                 let start = (chunk.at.duration_since(from).as_secs_f64()
-                    * f64::from(mumcord_audio::SAMPLE_RATE)) as usize;
+                    * f64::from(mumcord_codec::SAMPLE_RATE)) as usize;
                 for (slot, s) in out.iter_mut().skip(start).zip(&chunk.samples) {
                     *slot += s;
                 }

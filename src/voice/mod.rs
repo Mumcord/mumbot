@@ -20,8 +20,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use bytes::Bytes;
-use mumcord_audio::codec::{MAX_PACKET_BYTES, OpusEncoder, PacketDuration};
-use mumcord_audio::{FRAME_SAMPLES, Frame};
+use mumcord_codec::codec::{MAX_PACKET_BYTES, OpusEncoder, PacketDuration};
+use mumcord_codec::{FRAME_SAMPLES, Frame};
 use mumcord_protocol::voice::{OutgoingAudio, VoiceEvent, VoicePacket, VoiceTransport};
 use mumcord_protocol::{Event, Handle};
 use tokio::sync::broadcast;

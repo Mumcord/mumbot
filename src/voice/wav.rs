@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use mumcord_audio::{FRAME_SAMPLES, Frame, SAMPLE_RATE};
+use mumcord_codec::{FRAME_SAMPLES, Frame, SAMPLE_RATE};
 
 use super::analysis::duration_of;
 
