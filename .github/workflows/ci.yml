@@ -1,0 +1,171 @@
+name: CI
+
+# Branch pushes run through their pull request; a push trigger on every branch would run
+# everything twice. A branch without a pull request can be checked with a manual run.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # No debug info: CI only needs pass/fail, and it makes linking faster and the caches smaller.
+  CARGO_PROFILE_DEV_DEBUG: 0
+
+jobs:
+  # Decides whether the heavy jobs run. A path filter on the trigger would leave the required
+  # check pending forever on pull requests without code changes, so the check always reports.
+  changes:
+    name: Changed files
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts/ci
+      - id: filter
+        run: scripts/ci/code-changed.sh >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+
+  test:
+    name: Build and test (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows and macOS only build and run the unit tests: the release builds binaries there.
+        os: [ubuntu-24.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Rust format
+        if: runner.os == 'Linux'
+        run: cargo fmt --all --check
+
+      - name: Rust lint
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --locked
+
+  # The acceptance tests against an unmodified standard Mumble server in Docker (testenv/).
+  live:
+    name: Live tests
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      # up.sh seeds the channels with sqlite3. The runner image ships it; the fallback installs it
+      # through the mirror-switching helper, because the default mirror often stalls.
+      - name: Ensure sqlite3
+        timeout-minutes: 10
+        run: command -v sqlite3 || scripts/ci/apt-install.sh sqlite3
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build tests
+        run: cargo test --locked --no-run
+
+      - name: Start the test server
+        run: |
+          printf 'SUPERUSER_PASSWORD=%s\nSERVER_PASSWORD=\n' "$(openssl rand -hex 16)" > testenv/.env
+          testenv/up.sh
+
+      - name: Live tests
+        run: cargo test --locked -- --ignored --test-threads=1
+        env:
+          MUMBOT_LIVE: "1"
+
+      - name: Server log on failure
+        if: failure()
+        run: docker compose -f testenv/docker-compose.yml -p mumbot-testenv logs --tail 50
+        env:
+          PORT_V15: "44738"
+          DATA_ROOT: data
+          SUPERUSER_PASSWORD: x
+
+      - name: Stop the test server
+        if: always()
+        run: testenv/down.sh
+
+  docker:
+    name: Docker image
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build the image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: mumbot:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Without a reachable Mumble server the bot still serves /health (connected: false), which
+      # is all the image's health check needs.
+      - name: Health check
+        run: |
+          key=$(openssl rand -hex 16)
+          printf '[server]\nhost = "127.0.0.1"\nport = 1\n\n[http]\nlisten = "0.0.0.0:8080"\n\n[[keys]]\nkey = "%s"\nlabel = "ci"\nchannels = ["Lobby"]\n' "$key" > bot.toml
+          chmod 644 bot.toml
+          docker run -d --name mumbot -v "$PWD/bot.toml:/config/bot.toml:ro" -p 127.0.0.1:8080:8080 mumbot:ci
+          for _ in $(seq 30); do
+            if curl -fsS http://127.0.0.1:8080/health; then exit 0; fi
+            sleep 1
+          done
+          docker logs mumbot
+          exit 1
+
+  # The one required status check. Runs even when the heavy jobs were skipped (no code change),
+  # because a skipped job would not report its name.
+  result:
+    name: CI result
+    needs: [changes, test, live, docker]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check results
+        run: |
+          echo "changes: $CHANGES, test: $TEST, live: $LIVE, docker: $DOCKER"
+          ok() { [ "$1" = success ] || [ "$1" = skipped ]; }
+          [ "$CHANGES" = success ] && ok "$TEST" && ok "$LIVE" && ok "$DOCKER"
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          TEST: ${{ needs.test.result }}
+          LIVE: ${{ needs.live.result }}
+          DOCKER: ${{ needs.docker.result }}
