@@ -41,9 +41,9 @@ CI checks the examples on every pull request that touches them, the image or the
   `ghcr.io/mumcord/mumbot:0.1.0`), must report itself healthy and connected on `/health`, and
   must answer `{"delivered":true}` to a `POST /message`.
 
-Files in `examples/<name>/` only trigger that job; `examples/*.rs` and
-`examples/bot.example.toml` are Rust build and test inputs and trigger the full CI
-(`scripts/ci/code-changed.sh`).
+Files in `examples/<name>/` only trigger that job, and `examples/*.md` triggers nothing.
+`examples/*.rs` and `examples/bot.example.toml` are Rust build and test inputs and trigger the
+full CI (`scripts/ci/code-changed.sh`).
 
 ## Development
 
