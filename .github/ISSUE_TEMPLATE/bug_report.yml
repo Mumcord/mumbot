@@ -1,0 +1,72 @@
+name: Bug report
+description: Something in Mumbot doesn't work as expected.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please never post API keys, passwords, server or channel passwords, or certificates and private keys.
+        Remove every secret from the config and the logs before you paste them.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you see, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start the bot with …
+        2. Send …
+        3. …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Mumbot version
+      description: Output of `mumbot --version`
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: feature
+    attributes:
+      label: Feature
+      options:
+        - Webhook
+        - Test-bot CLI
+        - History bot
+        - Music bot
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: runtime
+    attributes:
+      label: How do you run it? Binary and OS, or Docker image tag
+      placeholder: "Binary on Debian 12, or ghcr.io/mumcord/mumbot:0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: server
+    attributes:
+      label: Mumble server version (if known)
+      placeholder: "1.5.735"
+  - type: textarea
+    id: config
+    attributes:
+      label: Config
+      description: |
+        Paste your config. **Remove all secrets first: no API keys, passwords, certificates or private keys.**
+        Replace them with placeholders such as `REDACTED`.
+      render: toml
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant log output. Remove anything private first.
+      render: text
