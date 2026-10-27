@@ -9,7 +9,8 @@ mumbot [OPTIONS] <COMMAND>
 
 - `mumbot webhook` runs the long-lived webhook bot ([webhook.md](webhook.md)).
 - Every other subcommand drives the scripted **test bot**: it connects, runs the subcommand (or a
-  whole script), stays for `--hold` seconds and exits.
+  whole script), stays connected for `--hold` seconds and exits. Before it disconnects it waits
+  until the server has received everything it sent, so a `say` or `pm` is never lost.
 - **Exit code 0 means the step or check passed.** An error or a timeout prints the reason on
   stderr and exits with 1. What a subcommand prints on stdout is listed below.
 - Only point the test bot at local or throwaway test servers, never at public or third-party
@@ -27,9 +28,9 @@ Given before the subcommand. `webhook` ignores them; its config file holds the c
 | `--cert <CERT>` | the `--name` | Persistent certificate name; reuse it to keep the identity. |
 | `--superuser` | off | Log in as `SuperUser`. Password: `SUPERUSER_PASSWORD` from the environment, else from `.env` in `MUMBOT_TESTENV_DIR`, `MUMCORD_TESTENV_DIR` or `./testenv`. |
 | `--timeout <TIMEOUT>` | `10` | Seconds for the login and for each wait. |
-| `--hold <HOLD>` | `0` | Seconds to wait after the command(s) before exiting. |
+| `--hold <HOLD>` | `0` | Seconds to stay connected after the command(s) before exiting. Not after a failed command. |
 | `-h`, `--help` | | Print help. |
-| `-V`, `--version` | | Print the version (`mumbot 0.1.0`). |
+| `-V`, `--version` | | Print the version (`mumbot 0.1.1`). |
 
 - Certificates are generated once per name and kept in `MUMBOT_DATA`, else `MUMCORD_BOT_DATA`,
   else `$XDG_DATA_HOME/mumbot` (usually `~/.local/share/mumbot`).

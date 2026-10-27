@@ -1,7 +1,7 @@
 [package]
 name = "mumbot"
 description = "Headless Mumble bots for standard Mumble servers: a webhook bot and a scripted test bot"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.90"
 license = "AGPL-3.0-only"

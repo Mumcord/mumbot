@@ -64,13 +64,23 @@ impl Session {
     }
 }
 
-/// Runs the command given on the command line; `script` reads further commands from stdin.
-pub async fn run_top_level(bot: Bot, command: Command) -> Result<()> {
+/// Runs the command given on the command line (`script` reads further commands from stdin),
+/// stays connected for `hold` after it succeeded and then disconnects cleanly, so everything the
+/// bot sent reaches the server first. A failed command ends the run without the hold.
+pub async fn run_top_level(bot: Bot, command: Command, hold: Duration) -> Result<()> {
     let mut session = Session { bot, voice: None };
-    match command {
+    let result = match command {
         Command::Script => run_script(&mut session).await,
         command => run(&mut session, command).await,
+    };
+    if result.is_ok() {
+        tokio::time::sleep(hold).await;
     }
+    let Session { bot, voice } = session;
+    drop(voice);
+    let disconnected = bot.disconnect().await;
+    result?;
+    disconnected
 }
 
 async fn run_script(session: &mut Session) -> Result<()> {

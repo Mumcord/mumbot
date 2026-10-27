@@ -4,7 +4,15 @@ All notable changes to Mumbot are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.1.1] - 2026-10-27
+
+### Fixed
+
+- Test bot: `--hold` keeps the bot connected again for the whole time after its command (it
+  disconnected before the hold since the move from the Mumcord repository), and every run waits
+  until the server has received all sent messages before it disconnects, so a `say` or `pm`
+  right before the exit (also with `--hold 0`, or a burst beyond the client-side rate limit) is
+  no longer lost (#14).
 
 ### Added
 
