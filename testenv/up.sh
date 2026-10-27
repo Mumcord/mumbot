@@ -31,4 +31,15 @@ if [ ! -f "$DATA_ROOT/$svc/.seeded" ]; then
   touch "$DATA_ROOT/$svc/.seeded"
   docker compose up -d "$svc"
 fi
-echo "test server up on port $PORT_V15"
+# An open port is not enough: right after a (re)start the server resets connections until its
+# virtual server is up, so wait for a complete TLS handshake.
+for _ in $(seq 60); do
+  if openssl s_client -connect "127.0.0.1:$PORT_V15" </dev/null >/dev/null 2>&1; then
+    echo "test server up on port $PORT_V15"
+    exit 0
+  fi
+  sleep 1
+done
+echo "the test server did not accept TLS connections within 60s" >&2
+docker compose logs --tail 20 "$svc" >&2
+exit 1
