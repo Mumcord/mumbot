@@ -539,7 +539,8 @@ dependencies = [
 [[package]]
 name = "mumcord-protocol"
 version = "0.4.2"
-source = "git+https://github.com/Mumcord/mumcord?tag=v0.4.2#26d831ce9154e1b15703744b25719d39806b9774"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33e5cac213a3f4108cabe01363d3db5518448fff1829b4813b94edbb54ca5fa9"
 dependencies = [
  "aes",
  "bytes",

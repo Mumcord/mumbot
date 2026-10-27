@@ -9,10 +9,9 @@ repository = "https://github.com/Mumcord/mumbot"
 publish = false
 
 [dependencies]
-# Pinned to a release tag of the Mumcord client, so a protocol change there never breaks the bot
-# unnoticed; raise the tag deliberately. Becomes `mumcord-protocol = "0.4"` once it is on
-# crates.io (specs/roadmap.md, open technical to-dos).
-mumcord-protocol = { git = "https://github.com/Mumcord/mumcord", tag = "v0.4.2" }
+# Published by the Mumcord client project; a minor bump (by hand or Dependabot) must pass the
+# live tests.
+mumcord-protocol = "0.4"
 tokio = { version = "1.54", features = ["full"] }
 anyhow = "1"
 tracing = "0.1"
