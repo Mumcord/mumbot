@@ -24,7 +24,7 @@ Taken from the open and deferred points of Epic 1 (`specs/01-webhook-specificati
 
 ## Open technical to-dos
 
-- **Switch `mumcord-codec` to crates.io**: the test bot's voice uses `mumcord-codec` (the Opus codec split out of `mumcord-audio` without device I/O, so the static Linux builds need no ALSA), pinned to a commit of Mumcord PR #61 for now. Once `mumcord-codec` 0.4.2 is published, replace the git dependency in `Cargo.toml` with `mumcord-codec = "0.4"` and run the live and voice tests.
+- Done: `mumcord-codec` comes from crates.io (`"0.4"`, first published version 0.4.2) instead of a git dependency pinned to a commit of Mumcord PR #61.
 - Done: `mumcord-protocol` comes from crates.io (`"0.4"`, first published version 0.4.2) instead of a git dependency.
 
 ## Carried over from Mumcord
