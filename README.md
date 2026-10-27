@@ -173,7 +173,7 @@ mumbot --port 44738 --superuser deny-listen Root/Raid
 
 ### Voice checks
 
-The test bot sends and receives real Opus voice (`mumcord-audio`, the codec settings of the
+The test bot sends and receives real Opus voice (`mumcord-codec`, the codec settings of the
 Mumcord client), over UDP with the TCP tunnel as fallback.
 
 - `play` sends a WAV file (any rate or channel count, converted to 48 kHz mono) in 20 ms packets

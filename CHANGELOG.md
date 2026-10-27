@@ -23,7 +23,7 @@ All notable changes to Mumbot are listed here. The format follows
   moderation and ACL helpers, `expect` checks, `script` mode), carried over from the Mumcord
   client repository with the same flags, output and exit codes, so Mumcord's E2E and smoke tests
   can download the `mumbot` release binary.
-  - Voice: `play`, `record`, `expect-audio` and `game-context`, with Opus from `mumcord-audio`.
+  - Voice: `play`, `record`, `expect-audio` and `game-context`, with Opus from `mumcord-codec`.
   - The old environment variables `MUMCORD_BOT_DATA` and `MUMCORD_TESTENV_DIR` still work.
   - Load generator `examples/loadtest.rs` and a separate load-test server (`testenv/scale/`).
 - Multi-arch Docker image (`ghcr.io/mumcord/mumbot`) and release binaries for Linux, Windows
