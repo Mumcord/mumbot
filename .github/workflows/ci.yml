@@ -135,20 +135,31 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Without a reachable Mumble server the bot still serves /health (connected: false), which
-      # is all the image's health check needs.
+      # The bot exits when its first login fails, so the image is checked against the local test
+      # server: the container must report itself healthy and connected.
+      - name: Start the test server
+        run: |
+          printf 'SUPERUSER_PASSWORD=%s\nSERVER_PASSWORD=\n' "$(openssl rand -hex 16)" > testenv/.env
+          testenv/up.sh
+
       - name: Health check
         run: |
-          key=$(openssl rand -hex 16)
-          printf '[server]\nhost = "127.0.0.1"\nport = 1\n\n[http]\nlisten = "0.0.0.0:8080"\n\n[[keys]]\nkey = "%s"\nlabel = "ci"\nchannels = ["Lobby"]\n' "$key" > bot.toml
+          printf '[server]\nhost = "127.0.0.1"\nport = 44738\nname = "Image Check"\nchannel = "Lobby"\n\n[http]\nlisten = "0.0.0.0:8080"\n\n[[keys]]\nkey = "%s"\nlabel = "ci"\nchannels = ["Lobby"]\n' "$(openssl rand -hex 16)" > bot.toml
           chmod 644 bot.toml
-          docker run -d --name mumbot -v "$PWD/bot.toml:/config/bot.toml:ro" -p 127.0.0.1:8080:8080 mumbot:ci
-          for _ in $(seq 30); do
-            if curl -fsS http://127.0.0.1:8080/health; then exit 0; fi
-            sleep 1
+          docker run -d --name mumbot --network host -v "$PWD/bot.toml:/config/bot.toml:ro" mumbot:ci
+          for _ in $(seq 60); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' mumbot)
+            if [ "$status" = healthy ] && curl -fsS http://127.0.0.1:8080/health | grep -q '"connected":true'; then
+              echo "healthy and connected"; exit 0
+            fi
+            sleep 2
           done
           docker logs mumbot
           exit 1
+
+      - name: Stop the test server
+        if: always()
+        run: testenv/down.sh
 
   # The one required status check. Runs even when the heavy jobs were skipped (no code change),
   # because a skipped job would not report its name.
