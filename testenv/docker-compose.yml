@@ -1,0 +1,18 @@
+# Local Mumble test server (unmodified upstream image). Start with ./up.sh, never with plain
+# "docker compose up" (up.sh generates the certificate, exports PUID/PGID and seeds channels).
+services:
+  v15:
+    image: mumblevoip/mumble-server:v1.5.735
+    restart: "no"
+    environment:
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      MUMBLE_SUPERUSER_PASSWORD: ${SUPERUSER_PASSWORD:?copy .env.example to .env}
+      MUMBLE_ACCEPT_UNKNOWN_SETTINGS: "true"
+      MUMBLE_CONFIG_SERVERPASSWORD: ${SERVER_PASSWORD:-}
+      MUMBLE_CONFIG_SSLCERT: /certs/cert.pem
+      MUMBLE_CONFIG_SSLKEY: /certs/key.pem
+      MUMBLE_CONFIG_REGISTERNAME: Mumbot Test Server
+      MUMBLE_CONFIG_AUTOBANATTEMPTS: "0"   # tests reconnect often; never ban them
+    ports: ["${PORT_V15}:64738/tcp", "${PORT_V15}:64738/udp"]
+    volumes: ["./${DATA_ROOT}/v15:/data", "./certs:/certs:ro"]
