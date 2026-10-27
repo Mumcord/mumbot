@@ -19,7 +19,7 @@ is_code() {
     scripts/ci/*) return 1 ;;
     # Rust
     *.rs | Cargo.toml | Cargo.lock | .cargo/* | rust-toolchain* | clippy.toml | rustfmt.toml \
-      | src/* | tests/* | examples/*) return 0 ;;
+      | src/* | tests/* | examples/* | assets/*) return 0 ;;
     # Image, test server and other build inputs
     Dockerfile | .dockerignore | testenv/* | scripts/*) return 0 ;;
     *) return 1 ;;

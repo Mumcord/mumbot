@@ -70,7 +70,8 @@ jobs:
       - name: Rust tests
         run: cargo test --locked
 
-  # The acceptance tests against an unmodified standard Mumble server in Docker (testenv/).
+  # The acceptance tests against an unmodified standard Mumble server in Docker (testenv/): the
+  # webhook bot, the test-bot library and CLI, and voice (play, record, level checks over UDP).
   live:
     name: Live tests
     needs: changes
@@ -98,7 +99,7 @@ jobs:
           printf 'SUPERUSER_PASSWORD=%s\nSERVER_PASSWORD=\n' "$(openssl rand -hex 16)" > testenv/.env
           testenv/up.sh
 
-      - name: Live tests
+      - name: Live and voice tests
         run: cargo test --locked -- --ignored --test-threads=1
         env:
           MUMBOT_LIVE: "1"
@@ -161,22 +162,42 @@ jobs:
         if: always()
         run: testenv/down.sh
 
+  # Mumcord's smoke tests download the static linux-aarch64 release binary; only a tag would
+  # build it otherwise. linux-x86_64 is built by the Docker job, Windows and macOS by the tests.
+  static-arm64:
+    name: Static build (linux-aarch64)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build (same command as release.yml)
+        run: |
+          docker run --rm -v "$PWD:/io" -w /io -e DEBIAN_FRONTEND=noninteractive \
+            ghcr.io/rust-cross/cargo-zigbuild:0.24.0 sh -c \
+            'apt-get update -qq && apt-get install -y -qq --no-install-recommends cmake >/dev/null &&
+             cargo zigbuild --release --locked --target aarch64-unknown-linux-musl'
+          file target/aarch64-unknown-linux-musl/release/mumbot | tee /dev/stderr | grep -q 'ARM aarch64.*statically linked'
+
   # The one required status check. Runs even when the heavy jobs were skipped (no code change),
   # because a skipped job would not report its name.
   result:
     name: CI result
-    needs: [changes, test, live, docker]
+    needs: [changes, test, live, docker, static-arm64]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Check results
         run: |
-          echo "changes: $CHANGES, test: $TEST, live: $LIVE, docker: $DOCKER"
+          echo "changes: $CHANGES, test: $TEST, live: $LIVE, docker: $DOCKER, static-arm64: $ARM64"
           ok() { [ "$1" = success ] || [ "$1" = skipped ]; }
-          [ "$CHANGES" = success ] && ok "$TEST" && ok "$LIVE" && ok "$DOCKER"
+          [ "$CHANGES" = success ] && ok "$TEST" && ok "$LIVE" && ok "$DOCKER" && ok "$ARM64"
         env:
           CHANGES: ${{ needs.changes.result }}
           TEST: ${{ needs.test.result }}
           LIVE: ${{ needs.live.result }}
           DOCKER: ${{ needs.docker.result }}
+          ARM64: ${{ needs.static-arm64.result }}
