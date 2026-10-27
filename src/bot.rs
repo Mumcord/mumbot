@@ -178,18 +178,73 @@ impl Bot {
         let mut config = self.config.clone();
         config.cert_name.get_or_insert_with(|| config.name.clone());
         config.name = new_name.to_owned();
-        self.handle.disconnect();
-        // Let the server drop the old session before the same certificate logs in again.
-        if tokio::time::timeout(self.config.timeout, &mut self.pump)
-            .await
-            .is_err()
-        {
-            tracing::warn!("old connection did not close in time");
+        if self.handle.is_connected() {
+            self.flush().await?;
         }
+        // Let the server drop the old session before the same certificate logs in again.
+        self.close().await;
         let fresh = Self::connect_with(config, self.events.clone()).await?;
         let old = std::mem::replace(self, fresh);
         drop(old);
         Ok(())
+    }
+
+    /// Disconnects cleanly: first waits until the server has everything sent so far (see
+    /// [`Bot::flush`]), then closes the connection and waits until it is closed. The connection
+    /// is closed even when the flush fails; the error is returned afterwards.
+    pub async fn disconnect(mut self) -> Result<()> {
+        let flushed = if self.handle.is_connected() {
+            self.flush().await
+        } else {
+            Ok(())
+        };
+        self.close().await;
+        flushed
+    }
+
+    /// Waits until the server has received everything this bot sent so far. Chat messages and
+    /// state changes are rate-limited on the client side and can still wait in the send queue,
+    /// which a disconnect drops. That queue is first in, first out, so a no-op self-mute change
+    /// (the own current value, which the server echoes to everyone) comes back only after all
+    /// that was queued before it has been written.
+    pub async fn flush(&self) -> Result<()> {
+        let own = self.own_user()?;
+        let mut events = self.subscribe();
+        self.handle.set_self_mute(own.self_mute)?;
+        let deadline = Instant::now() + self.config.timeout;
+        loop {
+            let event = tokio::time::timeout_at(deadline, events.recv())
+                .await
+                .map_err(|_| {
+                    anyhow!(
+                        "timed out after {:?} waiting for the server to receive the sent messages",
+                        self.config.timeout
+                    )
+                })?;
+            match event {
+                Ok(Event::UserUpdated(change)) if change.user.session == own.session => {
+                    return Ok(());
+                }
+                Ok(Event::Disconnected(reason)) => {
+                    bail!("disconnected ({reason:?}) before the sent messages were confirmed")
+                }
+                Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
+                Err(broadcast::error::RecvError::Closed) => {
+                    bail!("connection closed before the sent messages were confirmed")
+                }
+            }
+        }
+    }
+
+    /// Closes the connection and waits until it is closed, so the server sees the session end.
+    async fn close(&mut self) {
+        self.handle.disconnect();
+        if tokio::time::timeout(self.config.timeout, &mut self.pump)
+            .await
+            .is_err()
+        {
+            tracing::warn!("connection did not close in time");
+        }
     }
 
     /// Raw protocol handle, e.g. for the voice module.

@@ -223,3 +223,94 @@ async fn every_subcommand_works() {
     .expect("spawn");
     assert!(!out.status.success());
 }
+
+/// Issue #14: the bot must stay online for the whole `--hold`, and everything it sent must
+/// reach the server before it disconnects, also with `--hold 0`.
+#[tokio::test]
+#[ignore = "needs testenv and MUMBOT_LIVE=1"]
+async fn hold_keeps_the_bot_online_and_every_message_is_delivered() {
+    if std::env::var("MUMBOT_LIVE").ok().as_deref() != Some("1") {
+        return;
+    }
+    let data = tempfile::tempdir().expect("tempdir");
+    let data = data.path();
+    let obs_name = unique("obs");
+    let obs = Bot::connect(BotConfig {
+        data_dir: Some(data.to_owned()),
+        timeout: Duration::from_secs(20),
+        ..BotConfig::new(&obs_name, env::test_port())
+    })
+    .await
+    .expect("observer");
+    obs.join("Lobby").await.expect("observer joins");
+
+    let h = unique("cli-h");
+    let started = std::time::Instant::now();
+    let mut held = cli(
+        data,
+        &[
+            "--name",
+            &h,
+            "--hold",
+            "3",
+            "say",
+            "--channel",
+            "Lobby",
+            "held hello",
+        ],
+    )
+    .spawn()
+    .expect("spawn hold");
+    obs.wait_message(&MessageCheck {
+        from: Some(h.clone()),
+        contains: Some("held hello".into()),
+        ..Default::default()
+    })
+    .await
+    .expect("message of the held bot");
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "too slow to check the hold"
+    );
+    assert!(
+        obs.state().users.values().any(|u| u.name == h),
+        "the bot left during --hold"
+    );
+    assert!(held.wait().await.expect("hold exit").success());
+    assert!(
+        started.elapsed() >= Duration::from_secs(3),
+        "--hold cut short"
+    );
+    obs.wait_user_gone(&h)
+        .await
+        .expect("held bot leaves after the hold");
+
+    // More messages than the client-side rate limit sends at once, then an immediate exit:
+    // the queued ones must still go out before the disconnect.
+    let b = unique("cli-b");
+    let script: String = (1..=6)
+        .map(|n| format!("say --channel Lobby \"{b} burst {n}\"\n"))
+        .collect();
+    let mut burst = cli(data, &["--name", &b, "script"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("spawn burst");
+    let mut stdin = burst.stdin.take().expect("stdin");
+    stdin
+        .write_all(script.as_bytes())
+        .await
+        .expect("write script");
+    drop(stdin);
+    assert!(burst.wait().await.expect("burst exit").success());
+    for n in 1..=6 {
+        obs.wait_message(&MessageCheck {
+            from: Some(b.clone()),
+            contains: Some(format!("{b} burst {n}")),
+            ..Default::default()
+        })
+        .await
+        .unwrap_or_else(|e| panic!("burst message {n} lost: {e:#}"));
+    }
+}

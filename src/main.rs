@@ -87,9 +87,7 @@ async fn main() -> Result<()> {
         timeout: Duration::from_secs(cli.timeout),
     })
     .await?;
-    cli::run_top_level(bot, command).await?;
-    tokio::time::sleep(Duration::from_secs(cli.hold)).await;
-    Ok(())
+    cli::run_top_level(bot, command, Duration::from_secs(cli.hold)).await
 }
 
 #[cfg(test)]
