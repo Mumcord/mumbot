@@ -1,0 +1,24 @@
+# Build output
+/target/
+/dist/
+
+# Local secrets and test environment state
+.env
+.env.*
+!testenv/.env.example
+*.p12
+*.pfx
+*.pem
+*.key
+
+# Real config with API keys (FR-1.21): never commit.
+bot.toml
+
+# Logs and editor/OS clutter
+*.log
+.DS_Store
+.idea/
+.vscode/
+
+# Agent worktrees
+.claude/worktrees/
