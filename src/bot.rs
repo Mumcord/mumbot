@@ -1,12 +1,14 @@
 //! A connected bot: commands plus waiting helpers over what it observes.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use mumcord_protocol::{
-    ConnectConfig, DisconnectReason, Event, Handle, ServerState, TextMessage, User, connect,
+    ConnectConfig, DisconnectReason, Event, Handle, PermissionDenied, ServerState, TextMessage,
+    TextTarget, User, connect, proto,
 };
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio::task::JoinHandle;
@@ -96,10 +98,20 @@ impl BotConfig {
     }
 }
 
+/// Admin changes to another user's voice state; `None` leaves a flag as it is. Suppression is
+/// not here: servers refuse to suppress by request, it follows from a missing Speak permission
+/// (see [`Bot::deny_speak`]).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Moderation {
+    pub mute: Option<bool>,
+    pub deaf: Option<bool>,
+}
+
 /// What the bot has received since it connected.
 #[derive(Default)]
 struct Log {
     messages: Vec<TextMessage>,
+    denials: Vec<PermissionDenied>,
     /// Ids of `ChannelUpdated` events, in arrival order.
     channel_updates: Vec<u32>,
     disconnected: Option<DisconnectReason>,
@@ -143,7 +155,12 @@ impl Bot {
             log: Mutex::new(Log::default()),
             tick: watch::Sender::new(0),
         });
-        let pump = tokio::spawn(pump(conn.events, observed.clone(), events.clone()));
+        let pump = tokio::spawn(pump(
+            conn.handle.clone(),
+            conn.events,
+            observed.clone(),
+            events.clone(),
+        ));
         Ok(Self {
             config,
             handle: conn.handle,
@@ -175,12 +192,12 @@ impl Bot {
         Ok(())
     }
 
-    /// Raw protocol handle.
+    /// Raw protocol handle, e.g. for the voice module.
     pub fn handle(&self) -> &Handle {
         &self.handle
     }
 
-    /// All protocol events. Survives `reconnect_as`.
+    /// All protocol events (including voice tunnel/crypt events). Survives `reconnect_as`.
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
         self.events.subscribe()
     }
@@ -193,8 +210,20 @@ impl Bot {
         self.handle.state()
     }
 
+    pub fn own_user(&self) -> Result<User> {
+        self.handle
+            .with_state(|s| s.own_user().cloned())
+            .ok_or_else(|| anyhow!("own user not known"))
+    }
+
     pub fn channel_id(&self, name: &str) -> Result<u32> {
         self.handle.with_state(|s| resolve_channel(s, name))
+    }
+
+    fn session_of(&self, name: &str) -> Result<u32> {
+        self.handle
+            .with_state(|s| find_user(s, name).map(|u| u.session))
+            .ok_or_else(|| anyhow!("no user {name:?} connected"))
     }
 
     /// Moves into `channel` and waits until the server confirms it.
@@ -202,6 +231,97 @@ impl Bot {
         let id = self.channel_id(channel)?;
         self.handle.join_channel(id)?;
         self.wait_own(&format!("joining {channel}"), |u| u.channel_id == id)
+            .await
+    }
+
+    /// Sends HTML to a channel (`None` = the current channel).
+    pub fn send_channel(&self, channel: Option<&str>, html: &str) -> Result<()> {
+        let id = match channel {
+            Some(name) => self.channel_id(name)?,
+            None => self.own_user()?.channel_id,
+        };
+        Ok(self.handle.send_text(&TextTarget::channel(id), html)?)
+    }
+
+    /// Sends HTML privately to a connected user.
+    pub fn send_private(&self, user: &str, html: &str) -> Result<()> {
+        let session = self.session_of(user)?;
+        Ok(self.handle.send_text(&TextTarget::user(session), html)?)
+    }
+
+    pub fn set_mute(&self, mute: bool) -> Result<()> {
+        Ok(self.handle.set_self_mute(mute)?)
+    }
+
+    pub fn set_deaf(&self, deaf: bool) -> Result<()> {
+        Ok(self.handle.set_self_deaf(deaf)?)
+    }
+
+    /// Server-mutes or -deafens the user `name` as an admin (needs the superuser bot).
+    pub fn moderate(&self, name: &str, moderation: Moderation) -> Result<()> {
+        self.send_admin_user_state(
+            name,
+            proto::UserState {
+                mute: moderation.mute,
+                deaf: moderation.deaf,
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Moves the user `name` into `channel` as an admin (needs the superuser bot).
+    pub fn move_user(&self, name: &str, channel: &str) -> Result<()> {
+        let channel_id = self.channel_id(channel)?;
+        self.send_admin_user_state(
+            name,
+            proto::UserState {
+                channel_id: Some(channel_id),
+                ..Default::default()
+            },
+        )
+    }
+
+    fn send_admin_user_state(&self, name: &str, mut m: proto::UserState) -> Result<()> {
+        if !self.config.superuser {
+            bail!("changing other users needs the superuser bot");
+        }
+        m.session = Some(
+            find_user(&self.state(), name)
+                .with_context(|| format!("no user {name:?}"))?
+                .session,
+        );
+        Ok(self.handle.send_admin_user_state(m)?)
+    }
+
+    /// Requests listening; a refusal arrives as a denial (see [`Bot::wait_denied`]).
+    pub fn listen(&self, channels: &[&str]) -> Result<()> {
+        let ids = self.channel_ids(channels)?;
+        Ok(self.handle.listen(&ids)?)
+    }
+
+    pub fn unlisten(&self, channels: &[&str]) -> Result<()> {
+        let ids = self.channel_ids(channels)?;
+        Ok(self.handle.unlisten(&ids)?)
+    }
+
+    fn channel_ids(&self, channels: &[&str]) -> Result<Vec<u32>> {
+        channels.iter().map(|c| self.channel_id(c)).collect()
+    }
+
+    /// Sets the avatar (PNG/JPEG bytes; empty removes it).
+    pub fn set_avatar(&self, image: Vec<u8>) -> Result<()> {
+        Ok(self.handle.set_texture(image)?)
+    }
+
+    /// Sets the comment (HTML; empty removes it).
+    pub fn set_comment(&self, html: &str) -> Result<()> {
+        Ok(self.handle.set_comment(html.to_owned())?)
+    }
+
+    /// Registers the own certificate under the current name and waits for the confirmation.
+    pub async fn register(&self) -> Result<()> {
+        self.handle.register_self()?;
+        self.wait_own("self-registration", |u| u.user_id.is_some())
             .await
     }
 
@@ -213,10 +333,30 @@ impl Bot {
         .await
     }
 
+    /// Waits until no user called `name` is connected.
+    pub async fn wait_user_gone(&self, name: &str) -> Result<()> {
+        self.wait_until(&format!("user {name:?} to leave"), |s, _| {
+            find_user(s, name).is_none().then_some(())
+        })
+        .await
+    }
+
     /// Waits for a received text message matching `check` (also ones that arrived earlier).
     pub async fn wait_message(&self, check: &MessageCheck) -> Result<TextMessage> {
         self.wait_until(&format!("message with {check:?}"), |s, log| {
             log.messages.iter().find(|m| check.matches(m, s)).cloned()
+        })
+        .await
+    }
+
+    /// Waits for a denial matching `pred` (also ones that arrived earlier).
+    pub async fn wait_denied(
+        &self,
+        what: &str,
+        pred: impl Fn(&PermissionDenied) -> bool,
+    ) -> Result<PermissionDenied> {
+        self.wait_until(&format!("denial: {what}"), |_, log| {
+            log.denials.iter().find(|d| pred(d)).cloned()
         })
         .await
     }
@@ -283,24 +423,54 @@ impl Drop for Bot {
     }
 }
 
-/// Records events for the waiters and forwards them to subscribers.
+/// Records events for the waiters, forwards them to subscribers and fetches avatars/comments
+/// that the server announced only by hash.
 async fn pump(
+    handle: Handle,
     mut events: mpsc::UnboundedReceiver<Event>,
     observed: Arc<Observed>,
     subscribers: broadcast::Sender<Event>,
 ) {
+    let mut requested = HashSet::new();
+    fetch_missing_blobs(&handle, &mut requested);
     while let Some(event) = events.recv().await {
         {
             let mut log = observed.log();
             match &event {
                 Event::TextMessage(m) => log.messages.push(m.clone()),
+                Event::PermissionDenied(d) => log.denials.push(d.clone()),
                 Event::ChannelUpdated(c) => log.channel_updates.push(c.id),
                 Event::Disconnected(reason) => log.disconnected = Some(reason.clone()),
+                Event::UserUpdated(_) => fetch_missing_blobs(&handle, &mut requested),
                 _ => {}
             }
         }
         // No subscribers is normal.
         let _ = subscribers.send(event);
         observed.tick.send_modify(|n| *n += 1);
+    }
+}
+
+/// Requests each announced-but-missing avatar/comment once per hash.
+fn fetch_missing_blobs(handle: &Handle, requested: &mut HashSet<(u32, Vec<u8>)>) {
+    let (mut textures, mut comments) = (Vec::new(), Vec::new());
+    handle.with_state(|s| {
+        for u in s.users.values() {
+            if let (None, Some(hash)) = (&u.texture, &u.texture_hash)
+                && requested.insert((u.session, hash.clone()))
+            {
+                textures.push(u.session);
+            }
+            if let (None, Some(hash)) = (&u.comment, &u.comment_hash)
+                && requested.insert((u.session, hash.clone()))
+            {
+                comments.push(u.session);
+            }
+        }
+    });
+    if (!textures.is_empty() || !comments.is_empty())
+        && let Err(err) = handle.request_blobs(&textures, &comments, &[])
+    {
+        tracing::warn!(%err, "requesting avatars/comments failed");
     }
 }

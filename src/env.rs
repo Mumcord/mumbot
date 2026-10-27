@@ -30,11 +30,13 @@ pub fn testenv_var(key: &str) -> Option<String> {
     parse_env(&text, key)
 }
 
-/// `MUMBOT_TESTENV_DIR`, else the repository's `testenv/`.
+/// `MUMBOT_TESTENV_DIR`, else `MUMCORD_TESTENV_DIR` (the name Mumcord's tests already set), else
+/// `testenv/` in the working directory. Not the build directory: a release binary runs elsewhere,
+/// and `cargo test` runs from the repository root anyway.
 fn testenv_dir() -> PathBuf {
     std::env::var_os("MUMBOT_TESTENV_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testenv"))
+        .or_else(|| std::env::var_os("MUMCORD_TESTENV_DIR"))
+        .map_or_else(|| PathBuf::from("testenv"), PathBuf::from)
 }
 
 fn parse_env(text: &str, key: &str) -> Option<String> {

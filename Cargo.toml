@@ -1,6 +1,6 @@
 [package]
 name = "mumbot"
-description = "Headless Mumble bots for standard Mumble servers, starting with a webhook bot"
+description = "Headless Mumble bots for standard Mumble servers: a webhook bot and a scripted test bot"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.90"
@@ -10,8 +10,11 @@ publish = false
 
 [dependencies]
 # Published by the Mumcord client project; a minor bump (by hand or Dependabot) must pass the
-# live tests.
+# live tests. mumcord-audio gives the test bot's voice the same Opus settings as the client.
 mumcord-protocol = "0.4"
+mumcord-audio = "0.4"
+bytes = "1"
+hound = "3.5"
 tokio = { version = "1.54", features = ["full"] }
 anyhow = "1"
 tracing = "0.1"

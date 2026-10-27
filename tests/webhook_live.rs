@@ -107,7 +107,7 @@ async fn call(
 }
 
 #[tokio::test]
-#[ignore = "needs testenv v15 and MUMBOT_LIVE=1"]
+#[ignore = "needs testenv and MUMBOT_LIVE=1"]
 async fn webhook_messages_reach_the_channel_chat() {
     if !live() {
         return;
