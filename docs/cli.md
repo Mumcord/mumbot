@@ -30,7 +30,7 @@ Given before the subcommand. `webhook` ignores them; its config file holds the c
 | `--timeout <TIMEOUT>` | `10` | Seconds for the login and for each wait. |
 | `--hold <HOLD>` | `0` | Seconds to stay connected after the command(s) before exiting. Not after a failed command. |
 | `-h`, `--help` | | Print help. |
-| `-V`, `--version` | | Print the version (`mumbot 0.1.0`). |
+| `-V`, `--version` | | Print the version (`mumbot 0.1.1`). |
 
 - Certificates are generated once per name and kept in `MUMBOT_DATA`, else `MUMCORD_BOT_DATA`,
   else `$XDG_DATA_HOME/mumbot` (usually `~/.local/share/mumbot`).
