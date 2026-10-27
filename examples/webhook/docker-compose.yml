@@ -1,0 +1,42 @@
+# mumbot's webhook bot against a Mumble server you already run (any standard server).
+# Steps and checks: README.md next to this file.
+name: mumbot-webhook
+
+services:
+  mumbot:
+    image: ghcr.io/mumcord/mumbot:0.1.0
+    command: ["webhook"]
+    # The bot reconnects by itself after a dropped link; this restarts it after a crash, a
+    # reboot or a failed first login (for example while the server is still starting).
+    restart: unless-stopped
+    # The image's own non-root user; repeated here so the setup does not depend on the image.
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      MUMBOT_CONFIG: /config/bot.toml
+      # Connect password of the server, if it has one (kept out of bot.toml).
+      SERVER_PASSWORD: ${SERVER_PASSWORD:-}
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      # Loopback only: the API key travels in clear text over plain HTTP. To serve other
+      # machines, put a TLS reverse proxy in front instead of opening this port.
+      - "127.0.0.1:${HTTP_PORT:-8080}:8080"
+    # Lets bot.toml use host = "host.docker.internal" when the server runs on this machine.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./bot.toml:/config/bot.toml:ro
+      # The bot's client certificate (its identity on the server); keeps it across restarts.
+      - mumbot-data:/data
+    healthcheck:
+      # /health answers 200 even while the bot is reconnecting, so check the connected flag.
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/health | grep -q '\"connected\":true'"]
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+volumes:
+  mumbot-data:

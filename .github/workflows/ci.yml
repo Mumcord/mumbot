@@ -30,6 +30,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       code: ${{ steps.filter.outputs.code }}
+      examples: ${{ steps.filter.outputs.examples }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -162,6 +163,61 @@ jobs:
         if: always()
         run: testenv/down.sh
 
+  # The Docker Compose examples (examples/<name>/): every compose file must be valid, and
+  # webhook-with-server must come up with the image built from this change and deliver a message.
+  # Runs on code changes too, because a new image can break an example.
+  examples:
+    name: Examples
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || needs.changes.outputs.examples == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate every compose file
+        run: |
+          for dir in examples/*/; do
+            [ -f "$dir/docker-compose.yml" ] || continue
+            echo "checking $dir"
+            docker compose -f "$dir/docker-compose.yml" --env-file "$dir/.env.example" --profile "*" config --quiet
+          done
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build the image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          # The examples pin the released tag; this local tag makes them run this change's image
+          # instead (Compose only pulls an image that is missing).
+          tags: ghcr.io/mumcord/mumbot:0.1.0
+          cache-from: type=gha
+
+      - name: Smoke test webhook-with-server
+        working-directory: examples/webhook-with-server
+        run: |
+          sed "s/^SUPERUSER_PASSWORD=.*/SUPERUSER_PASSWORD=$(openssl rand -hex 16)/" .env.example > .env
+          key=$(openssl rand -hex 32)
+          sed "s/REPLACE-WITH-A-LONG-RANDOM-KEY/$key/" bot.example.toml > bot.toml
+          chmod 644 bot.toml
+          docker compose up -d --wait --wait-timeout 180
+          curl -fsS http://127.0.0.1:8080/health | tee /dev/stderr | grep -q '"connected":true'
+          curl -fsS -X POST http://127.0.0.1:8080/message -H "X-API-Key: $key" \
+            -d '{"channel": 0, "message": "**smoke test** from CI"}' | tee /dev/stderr \
+            | grep -q '"delivered":true'
+
+      - name: Logs on failure
+        if: failure()
+        working-directory: examples/webhook-with-server
+        run: docker compose logs --tail 50
+
+      - name: Stop the example
+        if: always()
+        working-directory: examples/webhook-with-server
+        run: docker compose down -v
+
   # Mumcord's smoke tests download the static linux-aarch64 release binary; only a tag would
   # build it otherwise. linux-x86_64 is built by the Docker job, Windows and macOS by the tests.
   static-arm64:
@@ -185,19 +241,21 @@ jobs:
   # because a skipped job would not report its name.
   result:
     name: CI result
-    needs: [changes, test, live, docker, static-arm64]
+    needs: [changes, test, live, docker, examples, static-arm64]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Check results
         run: |
-          echo "changes: $CHANGES, test: $TEST, live: $LIVE, docker: $DOCKER, static-arm64: $ARM64"
+          echo "changes: $CHANGES, test: $TEST, live: $LIVE, docker: $DOCKER, examples: $EXAMPLES, static-arm64: $ARM64"
           ok() { [ "$1" = success ] || [ "$1" = skipped ]; }
-          [ "$CHANGES" = success ] && ok "$TEST" && ok "$LIVE" && ok "$DOCKER" && ok "$ARM64"
+          [ "$CHANGES" = success ] && ok "$TEST" && ok "$LIVE" && ok "$DOCKER" && ok "$EXAMPLES" \
+            && ok "$ARM64"
         env:
           CHANGES: ${{ needs.changes.result }}
           TEST: ${{ needs.test.result }}
           LIVE: ${{ needs.live.result }}
           DOCKER: ${{ needs.docker.result }}
+          EXAMPLES: ${{ needs.examples.result }}
           ARM64: ${{ needs.static-arm64.result }}

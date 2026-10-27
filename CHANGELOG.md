@@ -4,6 +4,16 @@ All notable changes to Mumbot are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Docker Compose examples in `examples/`: `webhook/`, `webhook-with-server/` and `ci-test-bot/`,
+  each with a commented config, `.env.example`, health check and a volume for the bot's
+  certificate; CI validates them and smoke-tests `webhook-with-server`.
+- Reference documentation in `docs/`: configuration, CLI, HTTP API and security notes, plus an
+  overview page; a new README.
+
 ## [0.1.0] – Unreleased
 
 ### Changed

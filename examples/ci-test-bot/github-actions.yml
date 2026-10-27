@@ -1,0 +1,38 @@
+# Example GitHub Actions workflow: copy this folder (docker-compose.yml, .env.example) into your
+# project, put this file into .github/workflows/ and point working-directory at the folder.
+name: Mumble tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  mumble:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ci/mumble   # where docker-compose.yml of this example lives
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Start a throwaway Mumble server
+        run: |
+          # A fresh random SuperUser password per run; it never leaves the runner.
+          printf 'SUPERUSER_PASSWORD=%s\n' "$(openssl rand -hex 16)" > .env
+          docker compose up -d --wait mumble-server
+
+      - name: Test with the test bot
+        run: |
+          # Your client under test connects to 127.0.0.1:64738; the bot drives and checks it.
+          docker compose run --rm -T bot --name Observer --timeout 30 \
+            expect user MyClient --in Root
+
+      - name: Server log on failure
+        if: failure()
+        run: docker compose logs --tail 50 mumble-server
+
+      - name: Remove the server
+        if: always()
+        run: docker compose --profile bot down -v
