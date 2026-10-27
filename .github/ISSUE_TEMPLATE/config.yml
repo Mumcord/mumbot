@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/Mumcord/mumbot#readme
+    about: Installation, config and the webhook API.
+  - name: Mumcord client
+    url: https://github.com/Mumcord/mumcord
+    about: Problems with the Mumcord desktop client belong in its own repository.
