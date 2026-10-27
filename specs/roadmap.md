@@ -21,6 +21,10 @@ Taken from the open and deferred points of Epic 1 (`specs/01-webhook-specificati
 - **Operations**: runtime key rotation without restart (Q2.5), a key generation command (Q2.4), built-in TLS for the HTTP side (Q2.8), IP allowlists (Q2.9), request queueing (Q3.5), file logging and a verbose mode (Q3.7), config formats other than TOML (Q3.4), a systemd unit (Q3.8; the Docker image now exists).
 - **Server certificate check**: the bot core still accepts any server certificate (it came from Mumcord's test bot, which only talked to self-signed local test servers). A product bot should pin the server certificate on first use and refuse a changed one, in line with the TLS rule in `CLAUDE.md`. Needs a spec decision (pin storage, how an operator accepts a new certificate).
 
+## Open technical to-dos
+
+- **Switch `mumcord-protocol` to crates.io**: Mumcord plans to publish `mumcord-protocol` (first version 0.4.2). Once it is published, replace the git dependency in `Cargo.toml` with `mumcord-protocol = "0.4"` (a one-line change) and run the live tests. `mumcord-audio` is not needed by the webhook bot and is not planned for publishing; a talking bot (Q1.4) would need a decision on its audio code.
+
 ## Carried over from Mumcord
 
 Bot-related requirements, decisions and ideas found in the Mumcord client specs (repository `Mumcord/mumcord`, state of `main` on 2026-10-27). Neither Mumcord spec plans bots as a product; these are the constraints and hooks a Mumbot epic has to respect or could use.
