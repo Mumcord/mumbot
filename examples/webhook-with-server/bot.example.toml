@@ -1,0 +1,27 @@
+# Copy to bot.toml (git-ignored) and replace the placeholder key. Placeholder only.
+# Every key: docs/configuration.md.
+
+[server]
+# The server service of docker-compose.yml, reached over the compose network.
+host = "mumble-server"
+port = 64738
+# The user name people see in the channel.
+name = "Mumbot"
+# A fresh server only has its root channel. Create more with a Mumble client as SuperUser.
+channel = "Root"
+# The connect password comes from SERVER_PASSWORD in .env; do not repeat it here.
+
+[http]
+# Inside the container the bot must listen on all interfaces so the port can be published.
+# The bot then warns that HTTP is unencrypted; docker-compose.yml publishes it to 127.0.0.1 only.
+listen = "0.0.0.0:8080"
+rate_limit_per_minute = 20
+delivery_timeout_secs = 3
+
+# One block per outside system that may post. Generate a key with: openssl rand -hex 32
+[[keys]]
+key = "REPLACE-WITH-A-LONG-RANDOM-KEY"
+# Name used in the log; the key itself is never logged.
+label = "example"
+# Channels this key may write to: names or channel ids. The root channel always has id 0.
+channels = ["Root"]

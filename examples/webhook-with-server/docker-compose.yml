@@ -1,0 +1,62 @@
+# mumbot's webhook bot plus a standard Mumble server, for trying the bot out on one machine.
+# Steps and checks: README.md next to this file.
+name: mumbot-webhook-with-server
+
+services:
+  mumble-server:
+    # The unmodified upstream server image, the same one mumbot's own tests run against.
+    image: mumblevoip/mumble-server:v1.5.735
+    restart: unless-stopped
+    environment:
+      MUMBLE_SUPERUSER_PASSWORD: ${SUPERUSER_PASSWORD:?copy .env.example to .env and set SUPERUSER_PASSWORD}
+      MUMBLE_CONFIG_SERVERPASSWORD: ${SERVER_PASSWORD:-}
+    ports:
+      # Loopback only: connect your own Mumble client to 127.0.0.1 to see the bot's messages.
+      - "127.0.0.1:${MUMBLE_PORT:-64738}:64738/tcp"
+      - "127.0.0.1:${MUMBLE_PORT:-64738}:64738/udp"
+    volumes:
+      # Server database and its self-generated certificate.
+      - mumble-data:/data
+    healthcheck:
+      # An open port is not enough: right after start the server resets connections until its
+      # virtual server is up, so wait for a complete TLS handshake.
+      test: ["CMD-SHELL", "openssl s_client -connect 127.0.0.1:64738 </dev/null >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  mumbot:
+    image: ghcr.io/mumcord/mumbot:0.1.0
+    command: ["webhook"]
+    restart: unless-stopped
+    # The bot gives up when its very first login fails, so it starts once the server is ready.
+    depends_on:
+      mumble-server:
+        condition: service_healthy
+    # The image's own non-root user; repeated here so the setup does not depend on the image.
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      MUMBOT_CONFIG: /config/bot.toml
+      SERVER_PASSWORD: ${SERVER_PASSWORD:-}
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      # Loopback only: the API key travels in clear text over plain HTTP.
+      - "127.0.0.1:${HTTP_PORT:-8080}:8080"
+    volumes:
+      - ./bot.toml:/config/bot.toml:ro
+      # The bot's client certificate (its identity on the server); keeps it across restarts.
+      - mumbot-data:/data
+    healthcheck:
+      # /health answers 200 even while the bot is reconnecting, so check the connected flag.
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/health | grep -q '\"connected\":true'"]
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+volumes:
+  mumble-data:
+  mumbot-data:

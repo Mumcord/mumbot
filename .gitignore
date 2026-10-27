@@ -6,6 +6,7 @@
 .env
 .env.*
 !testenv/.env.example
+!examples/*/.env.example
 *.p12
 *.pfx
 *.pem

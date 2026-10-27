@@ -1,0 +1,36 @@
+# Copy to bot.toml (git-ignored), set your server and replace the placeholder key.
+# Placeholders only. Every key: docs/configuration.md.
+
+[server]
+# Your Mumble server. Use "host.docker.internal" if it runs on this machine.
+host = "mumble.example.org"
+port = 64738
+# The user name people see in the channel.
+name = "Mumbot"
+# Certificate name; keep it stable so the bot keeps its identity (no spaces).
+# cert_name = "Mumbot"
+# Channel the bot joins at login (name or Root/Path). Without it the bot stays in the root channel.
+channel = "Lobby"
+# The connect password comes from SERVER_PASSWORD in .env; do not repeat it here.
+
+[http]
+# Inside the container the bot must listen on all interfaces so the port can be published.
+# The bot then warns that HTTP is unencrypted; docker-compose.yml publishes it to 127.0.0.1 only.
+listen = "0.0.0.0:8080"
+# Requests per minute per key.
+rate_limit_per_minute = 20
+# Seconds a request waits for a possible denial on a channel the bot has not written to yet.
+delivery_timeout_secs = 3
+
+# One block per outside system that may post. Generate a key with: openssl rand -hex 32
+[[keys]]
+key = "REPLACE-WITH-A-LONG-RANDOM-KEY"
+# Name used in the log; the key itself is never logged.
+label = "monitoring"
+# Channels this key may write to: names or channel ids, mixed allowed.
+channels = ["Lobby"]
+
+# Channel passwords (Mumble access tokens), one block per channel. The bot presents them at login.
+# [[token]]
+# channel = "Ops"
+# password = "REPLACE-WITH-THE-CHANNEL-PASSWORD"

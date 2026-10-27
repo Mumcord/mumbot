@@ -1,0 +1,55 @@
+# A throwaway standard Mumble server plus mumbot's scripted test bot, for automated tests of a
+# Mumble client or setup in a CI pipeline. Steps: README.md next to this file.
+name: mumbot-ci-test-bot
+
+services:
+  mumble-server:
+    # The unmodified upstream server image, the same one mumbot's own tests run against.
+    image: mumblevoip/mumble-server:v1.5.735
+    # Throwaway: a CI run starts it, tests against it and removes it with "down -v".
+    restart: "no"
+    environment:
+      MUMBLE_SUPERUSER_PASSWORD: ${SUPERUSER_PASSWORD:?copy .env.example to .env and set SUPERUSER_PASSWORD}
+      # Tests reconnect often; never ban them for it.
+      MUMBLE_CONFIG_AUTOBANATTEMPTS: "0"
+    ports:
+      # Published so a client under test on the CI machine can connect to 127.0.0.1.
+      - "127.0.0.1:${MUMBLE_PORT:-64738}:64738/tcp"
+      - "127.0.0.1:${MUMBLE_PORT:-64738}:64738/udp"
+    healthcheck:
+      # An open port is not enough: right after start the server resets connections until its
+      # virtual server is up, so wait for a complete TLS handshake.
+      test: ["CMD-SHELL", "openssl s_client -connect 127.0.0.1:64738 </dev/null >/dev/null 2>&1"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+
+  # One test-bot step per "docker compose run --rm bot <options> <subcommand>". The connection
+  # options point at the server above; more options (--name, --timeout, ...) follow on the
+  # command line. Exit code 0 means the step or check passed.
+  bot:
+    image: ghcr.io/mumcord/mumbot:0.1.0
+    entrypoint: ["mumbot", "--host", "mumble-server", "--port", "64738"]
+    # Every run is one short step, never a service to keep alive.
+    restart: "no"
+    # Only started by "docker compose run", not by "docker compose up".
+    profiles: [bot]
+    depends_on:
+      mumble-server:
+        condition: service_healthy
+    # The image's own non-root user; repeated here so the setup does not depend on the image.
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      # Read by --superuser for admin steps (moderate, move, deny-speak, describe, ...).
+      SUPERUSER_PASSWORD: ${SUPERUSER_PASSWORD:?copy .env.example to .env and set SUPERUSER_PASSWORD}
+      RUST_LOG: ${RUST_LOG:-warn}
+    volumes:
+      # One client certificate per --name (or --cert): the same name keeps the same identity in
+      # every step of a run, which registration and ACL checks rely on.
+      - bot-data:/data
+
+volumes:
+  bot-data:
