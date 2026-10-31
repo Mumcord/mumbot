@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
+use mumbot::voice_settings::{VoiceConfig, VoiceSettings};
 use mumbot::webhook::WebhookConfig;
 use mumbot::{Bot, BotConfig, Module, env, modules};
 
@@ -34,8 +35,31 @@ struct Cli {
     /// Stay connected this many seconds after the command(s).
     #[arg(long, default_value_t = 0)]
     hold: u64,
+    #[command(flatten)]
+    voice: VoiceArgs,
     #[command(subcommand)]
     command: Command,
+}
+
+/// Voice quality for the bot's voice senders, above the environment and the config file.
+#[derive(Args, Debug)]
+struct VoiceArgs {
+    /// Opus bitrate in bit/s (6000 to 510000); the server's bandwidth limit can lower it.
+    /// Environment: MUMBOT_VOICE_BITRATE.
+    #[arg(long, global = true)]
+    bitrate: Option<u32>,
+    /// Voice packet length in ms (10 or 20). Environment: MUMBOT_VOICE_FRAME_MS.
+    #[arg(long, global = true)]
+    frame_ms: Option<u32>,
+}
+
+impl VoiceArgs {
+    fn layer(&self) -> VoiceConfig {
+        VoiceConfig {
+            bitrate: self.bitrate,
+            frame_ms: self.frame_ms,
+        }
+    }
 }
 
 /// Where and as whom a command-line run logs in; the modules read this from their config file.
@@ -127,8 +151,9 @@ async fn main() -> Result<()> {
         #[cfg(feature = "tester")]
         Command::Test(command) => {
             let hold = Duration::from_secs(cli.hold);
+            let settings = voice_settings(&cli.voice, VoiceConfig::default())?;
             let bot = connect(cli.connection).await?;
-            return cli::run_top_level(bot, command, hold).await;
+            return cli::run_top_level(bot, command, hold, settings).await;
         }
         #[cfg(not(feature = "tester"))]
         Command::Register => {
@@ -148,7 +173,20 @@ async fn main() -> Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
     let config = Arc::new(WebhookConfig::load(&config, &chosen)?);
+    // Checked now so a bad value stops the start, not the first voice a module sends.
+    let settings = voice_settings(&cli.voice, config.voice)?;
+    tracing::info!(
+        bitrate_bps = settings.bitrate_bps,
+        frame_ms = settings.frame_ms,
+        "voice settings"
+    );
     modules::run(config).await
+}
+
+/// Command line, then environment, then the config's `[voice]` section, then the defaults.
+fn voice_settings(args: &VoiceArgs, voice: VoiceConfig) -> Result<VoiceSettings> {
+    let env = VoiceConfig::from_env(|name| std::env::var(name).ok())?;
+    VoiceSettings::resolve(args.layer(), env, None, voice)
 }
 
 async fn connect(cli: Connection) -> Result<Bot> {

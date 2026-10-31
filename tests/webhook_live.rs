@@ -75,6 +75,8 @@ fn config(dir: &std::path::Path, name: &str) -> Arc<WebhookConfig> {
         tokens: Vec::new(),
         peer: None,
         history: None,
+
+        voice: Default::default(),
     })
 }
 

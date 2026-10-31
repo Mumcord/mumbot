@@ -1,29 +1,73 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="640" height="160" viewBox="0 0 640 160" role="img" aria-labelledby="title">
-  <title id="title">mumbot</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 360" width="1280" height="360" role="img" aria-labelledby="t d">
+  <title id="t">mumbot</title>
+  <desc id="d">mumbot logo, a friendly robot whose face is a chat bubble, with the tagline: friendly headless bots for any Mumble server</desc>
   <style>
-    .ink { fill: #1b1d29; }
-    .muted { fill: #5b6072; }
-    .face { fill: #ffffff; }
-    .wave { stroke: #7c5cff; }
+    .bg-a { stop-color: #f7f3ff; }
+    .bg-b { stop-color: #ffeef0; }
+    .name { fill: #1d0f5c; }
+    .tag { fill: #4a3f75; }
+    .frame { stroke: #e3dcf7; }
+    .chip { fill: #ffffff; stroke: #d9cff7; stroke-width: 2; }
+    .chiptext { fill: #4a3f75; }
     @media (prefers-color-scheme: dark) {
-      .ink { fill: #f4f4f8; }
-      .muted { fill: #a9adbd; }
-      .face { fill: #161822; }
-      .wave { stroke: #a08bff; }
+      .bg-a { stop-color: #160a3d; }
+      .bg-b { stop-color: #2a1478; }
+      .name { fill: #ffffff; }
+      .tag { fill: #cfc6f5; }
+      .frame { stroke: #3a2490; }
+      .chip { fill: #1d0f5c; stroke: #4a33a8; }
+      .chiptext { fill: #e4ddff; }
     }
+    text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif; }
   </style>
-  <!-- Robot head: a bot that talks into Mumble. -->
-  <g transform="translate(24 20)">
-    <line x1="60" y1="10" x2="60" y2="26" stroke="#7c5cff" stroke-width="6" stroke-linecap="round"/>
-    <circle cx="60" cy="8" r="8" fill="#7c5cff"/>
-    <rect x="8" y="26" width="104" height="94" rx="26" fill="#7c5cff"/>
-    <rect x="22" y="42" width="76" height="52" rx="16" class="face"/>
-    <circle cx="44" cy="68" r="8" fill="#7c5cff"/>
-    <circle cx="76" cy="68" r="8" fill="#7c5cff"/>
-    <rect x="44" y="102" width="32" height="6" rx="3" class="face"/>
-    <path d="M124 52 q12 21 0 42" fill="none" class="wave" stroke-width="6" stroke-linecap="round"/>
-    <path d="M140 40 q22 33 0 66" fill="none" class="wave" stroke-width="6" stroke-linecap="round" opacity="0.6"/>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" class="bg-a"/>
+      <stop offset="1" class="bg-b"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff9a8b"/>
+      <stop offset="1" stop-color="#8b6cff"/>
+    </linearGradient>
+    <linearGradient id="i-tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2a1478"/>
+      <stop offset="1" stop-color="#12082f"/>
+    </linearGradient>
+    <radialGradient id="i-glow" cx="0.5" cy="0.42" r="0.55">
+      <stop offset="0" stop-color="#8b6cff" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#8b6cff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="i-body" x1="0" y1="0" x2="1" y2="0.6">
+      <stop offset="0" stop-color="#ff9a8b"/>
+      <stop offset="1" stop-color="#8b6cff"/>
+    </linearGradient>
+    <linearGradient id="i-gloss" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect class="frame" x="1" y="1" width="1278" height="358" rx="28" fill="url(#bg)" stroke-width="2"/>
+  <g transform="translate(100 80) scale(0.390625)">
+  <rect width="512" height="512" rx="118" fill="url(#i-tile)"/>
+  <rect width="512" height="512" rx="118" fill="url(#i-glow)"/>
+  <rect x="244" y="96" width="24" height="76" rx="12" fill="#c58bd0"/>
+  <circle cx="256" cy="92" r="30" fill="#ff9a8b"/>
+  <circle cx="246" cy="82" r="9" fill="#ffffff" opacity="0.55"/>
+  <rect x="64" y="244" width="56" height="112" rx="28" fill="#ff9a8b"/>
+  <rect x="392" y="244" width="56" height="112" rx="28" fill="#8b6cff"/>
+  <rect x="100" y="160" width="312" height="264" rx="92" fill="url(#i-body)"/>
+  <path d="M192 160h128a92 92 0 0 1 92 92v6c-40-36-96-52-156-52s-116 16-156 52v-6a92 92 0 0 1 92-92z" fill="url(#i-gloss)"/>
+  <path d="M206 214h100a62 62 0 0 1 62 62v26a62 62 0 0 1-62 62h-72l-34 30a6 6 0 0 1-10-5l4-29a62 62 0 0 1-50-58v-26a62 62 0 0 1 62-62z" fill="#ffffff"/>
+  <circle cx="214" cy="280" r="22" fill="#1d0f5c"/>
+  <circle cx="298" cy="280" r="22" fill="#1d0f5c"/>
+  <circle cx="221" cy="272" r="7" fill="#ffffff"/>
+  <circle cx="305" cy="272" r="7" fill="#ffffff"/>
+  <path d="M226 322q30 22 60 0" fill="none" stroke="#8b6cff" stroke-width="12" stroke-linecap="round"/>
   </g>
-  <text x="208" y="88" class="ink" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="64" font-weight="700" letter-spacing="-1.5">mumbot</text>
-  <text x="211" y="124" class="muted" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="20">Headless bots for any Mumble server</text>
+  <text class="name" x="350" y="178" font-size="92" font-weight="800" letter-spacing="-2">mumbot</text>
+  <rect x="354" y="198" width="120" height="6" rx="3" fill="url(#accent)"/>
+  <text class="tag" x="352" y="246" font-size="30">Friendly headless bots for any Mumble server</text>
+  <rect class="chip" x="352" y="270" width="130" height="40" rx="20"/><text class="chiptext" x="417.0" y="297.2" font-size="20" text-anchor="middle">webhook</text>
+  <rect class="chip" x="496" y="270" width="93" height="40" rx="20"/><text class="chiptext" x="542.5" y="297.2" font-size="20" text-anchor="middle">peer</text>
+  <rect class="chip" x="603" y="270" width="118" height="40" rx="20"/><text class="chiptext" x="662.0" y="297.2" font-size="20" text-anchor="middle">tester</text>
 </svg>

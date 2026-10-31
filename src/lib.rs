@@ -19,6 +19,7 @@ pub mod peer;
 pub mod samples;
 #[cfg(feature = "tester")]
 pub mod voice;
+pub mod voice_settings;
 pub mod webhook;
 
 #[cfg(feature = "tester")]

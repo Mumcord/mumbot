@@ -13,6 +13,7 @@ use serde::Deserialize;
 use crate::Module;
 use crate::history::HistoryConfig;
 use crate::peer::PeerConfig;
+use crate::voice_settings::VoiceConfig;
 use crate::webhook::{DELIVERY_TIMEOUT, RATE_LIMIT_PER_MINUTE};
 
 /// Default listener: loopback only, must be changed explicitly to serve a LAN.
@@ -43,6 +44,11 @@ pub struct WebhookConfig {
     /// The history module; ignored unless it runs.
     #[serde(default)]
     pub history: Option<HistoryConfig>,
+
+    /// Bitrate and packet length of every module that sends voice (a module can override them
+    /// in its own section).
+    #[serde(default)]
+    pub voice: VoiceConfig,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
@@ -147,6 +153,7 @@ impl WebhookConfig {
         if !chosen.is_empty() {
             config.modules.enabled = chosen.to_vec();
         }
+        config.voice.validate(" in [voice]")?;
         config.validate_modules()?;
         Ok(config)
     }
@@ -506,6 +513,27 @@ channels = ["Lobby"]
 
     fn both() -> WebhookConfig {
         toml::from_str(&BOTH.replace("PIN", &"ab".repeat(32))).expect("config")
+    }
+
+    #[test]
+    fn the_voice_section_is_read_and_checked_at_load() {
+        let mut config = both();
+        assert_eq!(config.voice, VoiceConfig::default());
+        let text = format!(
+            "[voice]\nbitrate = 64000\nframe_ms = 10\n{}",
+            BOTH.replace("PIN", &"ab".repeat(32))
+        );
+        config = toml::from_str(&text).expect("config");
+        assert_eq!(
+            (config.voice.bitrate, config.voice.frame_ms),
+            (Some(64_000), Some(10))
+        );
+
+        let path = std::env::temp_dir().join(format!("mumbot-voice-{}.toml", std::process::id()));
+        std::fs::write(&path, text.replace("64000", "5")).expect("write");
+        let error = WebhookConfig::load(&path, &[Module::Webhook]).expect_err("out of range");
+        std::fs::remove_file(&path).ok();
+        assert!(format!("{error:#}").contains("out of range"), "{error:#}");
     }
 
     #[test]

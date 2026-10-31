@@ -22,8 +22,8 @@ mumbot [OPTIONS] <COMMAND>
 
 ## Global options
 
-Given before the subcommand. `webhook`, `peer` and `run` ignore them; their config file holds the
-connection.
+Given before the subcommand. `webhook`, `peer` and `run` ignore the connection options (their config
+file holds the connection); only `--bitrate` and `--frame-ms` apply to them.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
@@ -33,6 +33,8 @@ connection.
 | `--cert <CERT>` | the `--name` | Persistent certificate name; reuse it to keep the identity. |
 | `--superuser` | off | Log in as `SuperUser`. Password: `SUPERUSER_PASSWORD` from the environment, else from `.env` in `MUMBOT_TESTENV_DIR`, `MUMCORD_TESTENV_DIR` or `./testenv`. |
 | `--timeout <TIMEOUT>` | `10` | Seconds for the login and for each wait. |
+| `--bitrate <BPS>` | `96000` | Opus bitrate of voice the bot sends (`play`), 6000 to 510000; also `MUMBOT_VOICE_BITRATE`. The server's bandwidth limit can lower it (a warning is logged). `webhook`, `peer` and `run` take it too and use it above their `[voice]` section. |
+| `--frame-ms <MS>` | `20` | Voice packet length, `10` or `20`; also `MUMBOT_VOICE_FRAME_MS`. |
 | `--hold <HOLD>` | `0` | Seconds to stay connected after the command(s) before exiting. Not after a failed command. |
 | `-h`, `--help` | | Print help. |
 | `-V`, `--version` | | Print the version (`mumbot 0.1.1`). |
@@ -178,7 +180,7 @@ TCP tunnel as fallback.
 
 | Subcommand | Does | Prints |
 | --- | --- | --- |
-| `play <FILE> [--loop] [--seconds <S>] [--position <x,y,z>]` | Play a WAV file (any rate or channel count, converted to 48 kHz mono) as voice into the current channel in 20 ms packets, then a terminator packet. `--loop` repeats until `--seconds` is over (forever without it); `--position` sends positional-audio coordinates with every packet. | `played <n> packets in <ms> ms` |
+| `play <FILE> [--loop] [--seconds <S>] [--position <x,y,z>]` | Play a WAV file (any rate or channel count, converted to 48 kHz mono) as voice into the current channel in 20 ms packets (see `--frame-ms`) at `--bitrate`, then a terminator packet. `--loop` repeats until `--seconds` is over (forever without it); `--position` sends positional-audio coordinates with every packet. | `played <n> packets in <ms> ms` |
 | `record <OUT> --seconds <S> [--from <USER>]` | Record received voice into a 48 kHz mono WAV: the sum of all speakers, or only `--from`, silence included. | `recorded <s> s to <path>` |
 | `expect-audio [--from <USER>] [--min-rms <DBFS>] [--timeout <S>]` | Wait until voice reaches `--min-rms` (default `-40` dBFS) in a 100 ms window. Only audio after this command counts, so start it before the sender plays. `--timeout` defaults to the global one. | `<level dB> <latency ms>` |
 | `game-context <CONTEXT> [--identity <ID>]` | Announce a Mumble Link game context, so people in the same game hear this bot's positional voice placed. `""` means no game; `--identity` defaults to `""`. | |

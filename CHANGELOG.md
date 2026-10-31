@@ -8,14 +8,21 @@ All notable changes to Mumbot are listed here. The format follows
 
 ### Added
 
+- Configurable voice bitrate (#7): `[voice] bitrate` and `frame_ms` in the config, `--bitrate` and
+  `--frame-ms` on the command line and `MUMBOT_VOICE_BITRATE` / `MUMBOT_VOICE_FRAME_MS` in the
+  environment (command line, then environment, then a module's own section, then `[voice]`, then
+  the default of 96000 bit/s, Mumcord's default). The server's maximum bandwidth wins: the bot
+  lowers the bitrate to fit it with the packet overhead and logs a warning. The tester build's
+  `play` uses it; its default changes from 40000 to 96000 bit/s (capped by the server). 10 ms
+  packets are supported; 40 and 60 ms are not. See `docs/configuration.md`.
 - Peer bot `mumbot peer --config bot.toml` (Mumcord#62): announces a mumpeer relay to Mumcord
   clients over plugin data (`mumcord.peer`), fetches pair tokens from the relay's API on request
   and tells the relay when someone leaves. Needs the new `[peer]` section and a pinned server
   certificate. See `docs/peer.md` (#8).
 - `server.server_cert_sha256` for the peer bot (required): pins the Mumble server certificate;
   any other certificate is refused. The webhook bot rejects the key for now.
-- Docker Compose example `examples/peer-with-relay/` (Mumble server, mumpeer relay, peer bot);
-  the relay image is a placeholder until mumpeer is released.
+- Docker Compose example `examples/peer-with-relay/` (Mumble server, mumpeer relay, peer bot),
+  using the released `ghcr.io/mumcord/mumpeer:0.1.0` image.
 - Modules (#5): `mumbot run --config bot.toml` runs several modules (`webhook`, `peer`) on one
   Mumble connection and one bot user. Choose them with `--modules webhook,peer`, the environment
   variable `MUMBOT_MODULES` or the new optional `[modules] enabled = [...]` list in the config;

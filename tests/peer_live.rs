@@ -163,6 +163,8 @@ fn peer_config(dir: &Path, name: &str, relay_url: &str, pin: String) -> Arc<Webh
             api_fp: None,
         }),
         history: None,
+
+        voice: Default::default(),
     })
 }
 

@@ -79,6 +79,8 @@ fn config(
         },
         peer: None,
         history: None,
+
+        voice: Default::default(),
     })
 }
 
