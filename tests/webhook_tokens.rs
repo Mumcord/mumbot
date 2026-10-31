@@ -6,6 +6,8 @@
 //! that only the token group may enter becomes usable for it. A bot without the password stays
 //! outside and cannot write there.
 
+#![cfg(feature = "tester")]
+
 use std::sync::Arc;
 use std::time::Duration;
 

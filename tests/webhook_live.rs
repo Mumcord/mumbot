@@ -6,6 +6,8 @@
 //! AC-1.4 `GET /channels` and `GET /health`, AC-1.5 markup, AC-1.7 parallel requests,
 //! AC-1.8 nothing beyond an unmodified standard server is needed.
 
+#![cfg(feature = "tester")]
+
 use std::sync::Arc;
 
 use anyhow::Result;

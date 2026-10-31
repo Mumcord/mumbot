@@ -1,8 +1,11 @@
 name: Release
 
 # Pushing a tag `vX.Y.Z` on main checks that it matches the Cargo version, builds the binaries
-# and the multi-arch Docker image, and creates a DRAFT GitHub release with the binaries and
+# and the multi-arch Docker images, and creates a DRAFT GitHub release with the binaries and
 # SHA256SUMS. The maintainer reviews and publishes the release by hand.
+#
+# Every release has two variants (specs/03-modules-specification.md): `mumbot`, the production
+# modules only, and `mumbot-tester`, built with the `tester` feature (plus the scripted test bot).
 on:
   push:
     tags: ["v*"]
@@ -50,11 +53,13 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
   binaries:
-    name: Binary (${{ matrix.name }})
+    name: Binary (${{ matrix.variant }}, ${{ matrix.name }})
     needs: guard
     strategy:
       fail-fast: false
       matrix:
+        variant: [mumbot, mumbot-tester]
+        name: [linux-x86_64, linux-aarch64, windows-x86_64, macos-universal]
         include:
           - name: linux-x86_64
             os: ubuntu-24.04
@@ -70,6 +75,8 @@ jobs:
             target: universal
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    env:
+      FEATURES: ${{ matrix.variant == 'mumbot-tester' && '--features tester' || '' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -80,8 +87,8 @@ jobs:
         run: |
           docker run --rm -v "$PWD:/io" -w /io -e DEBIAN_FRONTEND=noninteractive \
             ghcr.io/rust-cross/cargo-zigbuild:0.24.0 sh -c \
-            'apt-get update -qq && apt-get install -y -qq --no-install-recommends cmake >/dev/null &&
-             cargo zigbuild --release --locked --target ${{ matrix.target }}'
+            "apt-get update -qq && apt-get install -y -qq --no-install-recommends cmake >/dev/null &&
+             cargo zigbuild --release --locked --target ${{ matrix.target }} $FEATURES"
           mkdir -p out && cp target/${{ matrix.target }}/release/mumbot out/
 
       - uses: dtolnay/rust-toolchain@stable
@@ -93,14 +100,14 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          cargo build --release --locked --target ${{ matrix.target }}
+          cargo build --release --locked --target ${{ matrix.target }} $FEATURES
           mkdir -p out && cp target/${{ matrix.target }}/release/mumbot.exe out/
 
       - name: Build (macOS universal)
         if: runner.os == 'macOS'
         run: |
           for t in aarch64-apple-darwin x86_64-apple-darwin; do
-            cargo build --release --locked --target "$t"
+            cargo build --release --locked --target "$t" $FEATURES
           done
           mkdir -p out
           lipo -create -output out/mumbot \
@@ -113,7 +120,8 @@ jobs:
           VERSION: ${{ needs.guard.outputs.version }}
         run: |
           cp LICENSE README.md CHANGELOG.md examples/bot.example.toml out/
-          name="mumbot-$VERSION-${{ matrix.name }}"
+          # Both variants hold a binary named `mumbot`, so scripts only change the archive name.
+          name="${{ matrix.variant }}-$VERSION-${{ matrix.name }}"
           mkdir dist
           if [[ "$RUNNER_OS" == Windows ]]; then
             (cd out && 7z a "../dist/$name.zip" . >/dev/null)
@@ -124,13 +132,21 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: mumbot-${{ matrix.name }}
+          name: ${{ matrix.variant }}-${{ matrix.name }}
           path: dist/*
           if-no-files-found: error
 
   docker:
-    name: Docker image
+    name: Docker image (${{ matrix.variant }})
     needs: guard
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: mumbot
+            features: ""
+          - variant: mumbot-tester
+            features: tester
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -152,7 +168,7 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/mumcord/mumbot
+          images: ghcr.io/mumcord/${{ matrix.variant }}
           tags: |
             type=raw,value=${{ needs.guard.outputs.version }}
             type=raw,value=latest,enable=${{ !contains(needs.guard.outputs.version, '-') }}
@@ -163,6 +179,7 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
+          build-args: FEATURES=${{ matrix.features }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
@@ -190,19 +207,26 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           # Fails if any binary is missing.
-          files=(mumbot-*-linux-x86_64.tar.gz mumbot-*-linux-aarch64.tar.gz mumbot-*-windows-x86_64.zip mumbot-*-macos-universal.tar.gz)
+          files=()
+          for variant in mumbot mumbot-tester; do
+            files+=("$variant-$VERSION-linux-x86_64.tar.gz" "$variant-$VERSION-linux-aarch64.tar.gz"
+              "$variant-$VERSION-windows-x86_64.zip" "$variant-$VERSION-macos-universal.tar.gz")
+          done
           ls -l -- "${files[@]}"
           sha256sum -- "${files[@]}" > SHA256SUMS
           cat SHA256SUMS
           cat > ../notes.md <<EOF
           ## Downloads
 
+          Two variants: **mumbot** runs the production modules (webhook, peer); **mumbot-tester** adds the scripted test bot (checks, voice, samples) for testing Mumble servers and clients in CI.
+
           - **Linux** (static, any distribution): \`mumbot-$VERSION-linux-x86_64.tar.gz\` or \`mumbot-$VERSION-linux-aarch64.tar.gz\`
           - **Windows**: \`mumbot-$VERSION-windows-x86_64.zip\`
           - **macOS** (Apple Silicon and Intel): \`mumbot-$VERSION-macos-universal.tar.gz\`
           - **Docker** (linux/amd64, linux/arm64): \`docker pull ghcr.io/mumcord/mumbot:$VERSION\`
+          - **Tester**: the same archives as \`mumbot-tester-$VERSION-<platform>\`, and \`docker pull ghcr.io/mumcord/mumbot-tester:$VERSION\`
 
-          Each archive holds the \`mumbot\` binary (webhook bot and scripted test bot) at its top level. Check a download with \`sha256sum -c SHA256SUMS --ignore-missing\`. Start with the README and \`bot.example.toml\` in the archive.
+          Each archive holds the \`mumbot\` binary at its top level. Check a download with \`sha256sum -c SHA256SUMS --ignore-missing\`. Start with the README and \`bot.example.toml\` in the archive.
 
           Built by [this workflow run]($RUN_URL). Licensed under the [GNU AGPL-3.0](https://github.com/Mumcord/mumbot/blob/main/LICENSE) only.
 
