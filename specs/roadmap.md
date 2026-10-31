@@ -10,6 +10,7 @@ Specs: `specs/{nr}-{name}-specification.md` per epic, created with the `/spec` s
 | --- | --- | --- | --- |
 | 0 | Test bot: the scripted `mumbot` CLI (chat, state, ACL helpers, `expect` checks, voice play/record/level checks) and the load generator, used by Mumcord's E2E and smoke tests | Built (carried over from Mumcord's `crates/bot`) | `specs/00-test-bot-carried-over.md` |
 | 1 | Webhook bot: messages from outside systems into a channel | Built (carried over from Mumcord, PR #51); packaging added in the move addendum | `specs/01-webhook-specification.md` |
+| 2 | Peer bot (`mumbot peer`, #8): announces a mumpeer relay to Mumcord clients and fetches pair tokens from its API | In progress (PR #17) | Mumcord `specs/04-mumpeer-relay-specification.md` (FR-4.22 to FR-4.28, sections 6.4 and 6.6) |
 
 ## Candidate epics (not specified yet)
 

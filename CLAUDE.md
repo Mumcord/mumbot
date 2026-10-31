@@ -33,7 +33,7 @@ Everything is in English: chat, specs, docs, code, comments, commit messages and
 - User-visible changes get a line in `CHANGELOG.md` under the unreleased version.
 - Secrets never go into the repo (no API keys, passwords, bot certificates or private keys in files, docs or examples). Use only local git-ignored files (`bot.toml`, `testenv/.env`) and CI variables.
 - Never connect to public or third-party Mumble servers for testing; use the local test server (`testenv/up.sh`).
-- **Client only.** Never build, require or modify anything on the server side (no companion services, server plugins or server config changes). Every bot must work against an unmodified standard Mumble server. A bot's own listener (e.g. the webhook HTTP API) runs on the bot's side and is fine.
+- **Client only.** Never build, require or modify anything on the server side (no server plugins or server config changes). Every bot must work against an unmodified standard Mumble server. A bot's own listener (e.g. the webhook HTTP API) runs on the bot's side and is fine. Optional companion services (e.g. the mumpeer relay the peer bot talks to) are allowed, but only in their own repos, and every bot must work fully without them. Nothing may ever be required on the server side.
 - Releases: a `v*` tag builds binaries, the Docker image and a draft GitHub release; the user publishes it by hand. Never create tags or releases without being asked.
 
 ## Stack
