@@ -45,7 +45,7 @@ This epic turns the production bots into **modules** of one bot that can run alo
 
 ### 3.2 Variants
 
-- **FR-3.7** The Cargo feature `tester` (off by default) holds the scripted test bot (every test subcommand, `script`, `expect` and voice checks), the voice module, the chat and image samples, the ACL helpers, the user and message checks, and the load generator example. The Opus codec and WAV crates are optional dependencies of that feature.
+- **FR-3.7** The Cargo feature `tester` (off by default) holds the scripted test bot (every test subcommand, `script`, `expect` and voice checks), the voice module, the chat and image samples, the ACL helpers, the user and message checks, and the load generator example. The WAV crate is an optional dependency of that feature (the Opus codec was too, until the music module needed it in the main build).
 - **FR-3.8** The tester build keeps every test subcommand at the top level with unchanged flags, output and exit codes (Mumcord's E2E and smoke tests rely on them).
 - **FR-3.9** In the main build, any other command than the production ones prints a clear message that test commands need the tester build (the `mumbot-tester` archive or Docker image) and exits with code 2.
 - **FR-3.10** `register` stays in the main build: the peer bot's setup registers the bot once with its own identity (`mumbot --name RelayBot register`), and that is not a test.
@@ -64,7 +64,7 @@ This epic turns the production bots into **modules** of one bot that can run alo
 - **AC-3.4** An existing webhook config without `[modules]` still works with `mumbot webhook`.
 - **AC-3.5** A main build answers `mumbot say hi` with the tester-build message and exit code 2; `mumbot webhook`, `mumbot peer`, `mumbot run` and `mumbot register` still parse.
 - **AC-3.6** A tester build accepts every test subcommand Mumcord's E2E uses, unchanged.
-- **AC-3.7** `cargo tree` of the main build contains neither `mumcord-codec` nor `hound`.
+- **AC-3.7** `cargo tree` of the main build contains no `hound` (`mumcord-codec` joined the main build with the music module, `specs/04-music-specification.md` Q11).
 
 ## 5. Decision log
 
