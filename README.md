@@ -41,9 +41,8 @@ same in the official Mumble client and in [Mumcord](https://github.com/Mumcord/m
 | **`history`** | Stays online, records the chat of the channels you choose and hands it to Mumcord clients that were offline (history sync). | main + tester | [history.md](docs/history.md) |
 
 > [!NOTE]
-> The `peer`, `history` and `music` modules, `mumbot run`, the `[voice]` settings and the
-> separate tester build are on `main` and ship with the next release. Release 0.1.1 has the
-> webhook bot and the test bot in one build.
+> Release 0.2.0 adds the `peer`, `history` and `music` modules, `mumbot run`, the `[voice]`
+> settings and the separate tester build.
 
 ## How it fits together
 
@@ -94,7 +93,7 @@ chmod 644 bot.toml
 
 docker run -d --name mumbot -p 127.0.0.1:8080:8080 \
   -v "$PWD/bot.toml:/config/bot.toml:ro" -v mumbot-data:/data \
-  ghcr.io/mumcord/mumbot:0.1.1
+  ghcr.io/mumcord/mumbot:0.2.0
 ```
 
 ```bash
@@ -110,9 +109,9 @@ standard Mumble server next to the bot with one `docker compose up`.
 ### Main build, binary
 
 ```bash
-curl -LO https://github.com/Mumcord/mumbot/releases/download/v0.1.1/mumbot-0.1.1-linux-x86_64.tar.gz
-curl -LO https://github.com/Mumcord/mumbot/releases/download/v0.1.1/SHA256SUMS
-sha256sum -c SHA256SUMS --ignore-missing && tar xzf mumbot-0.1.1-linux-x86_64.tar.gz
+curl -LO https://github.com/Mumcord/mumbot/releases/download/v0.2.0/mumbot-0.2.0-linux-x86_64.tar.gz
+curl -LO https://github.com/Mumcord/mumbot/releases/download/v0.2.0/SHA256SUMS
+sha256sum -c SHA256SUMS --ignore-missing && tar xzf mumbot-0.2.0-linux-x86_64.tar.gz
 ./mumbot webhook --config bot.toml
 ```
 
@@ -144,7 +143,7 @@ local or throwaway servers.
 
 ## Running several modules
 
-From the next release (on `main` today):
+Since 0.2.0:
 
 ```bash
 mumbot webhook --config bot.toml                          # one module
@@ -281,9 +280,6 @@ More: [docs/security.md](docs/security.md).
 | [`history/`](examples/history/) | Run the history bot against the Mumble server you already have. |
 | [`ci-test-bot/`](examples/ci-test-bot/) | Test a Mumble client in CI against a throwaway server (tester image). |
 
-The `peer-with-relay`, `music` and `history` examples need the next release's image; until then,
-build the image from this repository as [`examples/music/README.md`](examples/music/README.md) shows.
-
 ## Releases and variants
 
 Every release ships two variants. Both binaries are called `mumbot`; only the archive and image
@@ -303,7 +299,7 @@ names differ. Check downloads against `SHA256SUMS` from the same release.
 - Images are multi-arch (`linux/amd64`, `linux/arm64`), non-root, with a health check on
   `/health`. Stable releases also get `latest`; pin a version tag.
 - The main build answers a test command with a pointer to the tester build (exit code 2).
-- The tester variant starts with the next release (see the note under [Modules](#modules)).
+- The tester variant exists since 0.2.0 (see the note under [Modules](#modules)).
 
 From source (Rust 1.90+):
 
