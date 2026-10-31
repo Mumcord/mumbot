@@ -30,7 +30,7 @@ pub struct WebhookConfig {
     /// an error, so a typo is reported instead of silently ignored.
     #[serde(default, alias = "token")]
     pub tokens: Vec<ChannelToken>,
-    /// The relay discovery module; off unless the section is present.
+    /// The peer bot (`mumbot peer`); the webhook bot ignores it.
     #[serde(default)]
     pub peer: Option<PeerConfig>,
 }
@@ -77,6 +77,10 @@ pub struct ServerConfig {
     /// Log in as `SuperUser` (no certificate); only for local test servers.
     #[serde(default)]
     pub superuser: bool,
+    /// SHA-256 of the server certificate (hex, colons allowed); any other certificate is
+    /// refused. Required by the peer bot.
+    #[serde(default)]
+    pub server_cert_sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -119,24 +123,58 @@ impl std::fmt::Debug for ApiKey {
 }
 
 impl WebhookConfig {
-    /// Reads and validates a TOML config file.
+    /// Reads and validates a TOML config file for the webhook bot.
     pub fn load(path: &Path) -> Result<Self> {
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("cannot read config {}", path.display()))?;
-        let config: Self =
-            toml::from_str(&text).with_context(|| format!("invalid config {}", path.display()))?;
+        let config = Self::read(path)?;
         config.validate()?;
         Ok(config)
     }
 
+    /// Reads and validates a TOML config file for the peer bot: `[peer]` and a pinned server
+    /// certificate are required, API keys are not (mumcord spec 04, FR-4.22 and FR-4.28).
+    pub fn load_peer(path: &Path) -> Result<Self> {
+        let config = Self::read(path)?;
+        config.validate_peer()?;
+        Ok(config)
+    }
+
+    fn read(path: &Path) -> Result<Self> {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("cannot read config {}", path.display()))?;
+        toml::from_str(&text).with_context(|| format!("invalid config {}", path.display()))
+    }
+
+    fn validate_peer(&self) -> Result<()> {
+        let Some(peer) = &self.peer else {
+            bail!("config has no [peer] section");
+        };
+        peer.validate()?;
+        if self.server.server_cert_sha256.is_none() {
+            bail!(
+                "the peer bot needs server.server_cert_sha256, the SHA-256 of the Mumble server \
+                 certificate, so it never hands out tokens on a server it did not mean to join"
+            );
+        }
+        self.server_cert_pin()?;
+        Ok(())
+    }
+
+    /// The pinned server certificate, normalized.
+    fn server_cert_pin(&self) -> Result<Option<String>> {
+        self.server
+            .server_cert_sha256
+            .as_deref()
+            .map(|value| {
+                crate::peer::config::normalize_sha256(value).context("server.server_cert_sha256")
+            })
+            .transpose()
+    }
+
     fn validate(&self) -> Result<()> {
-        // A bot that only runs the peer module needs no webhook key.
-        if self.keys.is_empty() && self.peer.is_none() {
+        if self.keys.is_empty() {
             bail!("config has no API key");
         }
-        if let Some(peer) = &self.peer {
-            peer.validate()?;
-        }
+        self.server_cert_pin()?;
         for entry in &self.keys {
             if entry.key.is_empty() {
                 bail!("a key entry is empty");
@@ -186,6 +224,13 @@ impl WebhookConfig {
         });
         bot.data_dir = self.server.data_dir.clone();
         bot.superuser = self.server.superuser;
+        // `load` and `load_peer` validate the pin; an invalid one never matches a certificate.
+        bot.server_cert_sha256 = self.server.server_cert_sha256.as_ref().map(|value| {
+            self.server_cert_pin()
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| value.clone())
+        });
         bot.password = self
             .server
             .password
@@ -277,6 +322,7 @@ impl Default for ServerConfig {
             password: None,
             data_dir: None,
             superuser: false,
+            server_cert_sha256: None,
         }
     }
 }
@@ -359,21 +405,30 @@ channels = ["Lobby", 42]
     }
 
     #[test]
-    fn a_peer_only_config_needs_no_key_but_a_valid_peer_section() {
+    fn the_peer_bot_needs_its_section_and_a_server_pin_but_no_key() {
         let text = r#"
+[server]
+server_cert_sha256 = "PIN"
+
 [peer]
-udp = ["relay.example.org:3478"]
-tcp = ["relay.example.org:443"]
-fingerprint = "PLACEHOLDER"
-api_url = "http://127.0.0.1:8090"
-secret_file = "relay.secret"
+api_url = "http://127.0.0.1:7480"
+api_secret_file = "relay.secret"
 "#;
-        let valid = text.replace("PLACEHOLDER", &"ab".repeat(32));
-        let config: WebhookConfig = toml::from_str(&valid).expect("config");
-        config.validate().expect("no key needed with [peer]");
-        assert_eq!(config.peer.expect("peer").token_ttl_secs, 120);
-        let config: WebhookConfig = toml::from_str(text).expect("config");
-        assert!(config.validate().is_err(), "the fingerprint is checked");
+        let pin = format!("{}AB", "AB:".repeat(31));
+        let config: WebhookConfig = toml::from_str(&text.replace("PIN", &pin)).expect("config");
+        config.validate_peer().expect("no key needed");
+        assert_eq!(
+            config.bot_config().server_cert_sha256,
+            Some("ab".repeat(32)),
+            "the pin is normalized"
+        );
+        let config: WebhookConfig = toml::from_str(&text.replace("PIN", "abc")).expect("config");
+        assert!(config.validate_peer().is_err(), "the pin is checked");
+        let config: WebhookConfig =
+            toml::from_str(&text.replace("server_cert_sha256 = \"PIN\"", "")).expect("config");
+        assert!(config.validate_peer().is_err(), "the pin is required");
+        let config: WebhookConfig = toml::from_str("").expect("config");
+        assert!(config.validate_peer().is_err(), "[peer] is required");
     }
 
     #[test]

@@ -11,7 +11,7 @@ mod state;
 pub use config::{ApiKey, ChannelRef, ChannelToken, HttpConfig, ServerConfig, WebhookConfig};
 pub use http::{Api, DeliveryError, RateLimiter, Request, Response, handle, parse_request, serve};
 pub use markdown::render_html;
-pub use state::{BotApi, run};
+pub use state::{BotApi, run, supervise};
 
 use std::time::Duration;
 

@@ -42,6 +42,9 @@ pub struct BotConfig {
     pub password: Option<String>,
     /// Channel passwords (Mumble access tokens) presented at login (mumcord FR-2.78).
     pub tokens: Vec<String>,
+    /// SHA-256 (lowercase hex) of the server certificate; when set, any other certificate is
+    /// refused. Without it every certificate is accepted (local test servers are self-signed).
+    pub server_cert_sha256: Option<String>,
     pub timeout: Duration,
 }
 
@@ -57,6 +60,7 @@ impl BotConfig {
             superuser: false,
             password: None,
             tokens: Vec::new(),
+            server_cert_sha256: None,
             timeout: DEFAULT_TIMEOUT,
         }
     }
@@ -91,8 +95,12 @@ impl BotConfig {
             password,
             tokens: self.tokens.clone(),
             identity,
-            // Bots only talk to the local test servers, whose certificates are self-signed.
-            verify_cert: Arc::new(|_| true),
+            verify_cert: match self.server_cert_sha256.clone() {
+                Some(pin) => Arc::new(move |cert| cert.sha256_hex == pin),
+                // The test bot only talks to local test servers, whose certificates are
+                // self-signed.
+                None => Arc::new(|_| true),
+            },
             login_timeout: self.timeout,
         })
     }

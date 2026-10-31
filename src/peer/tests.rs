@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::bail;
 use bytes::Bytes;
-use mumcord_protocol::{DisconnectReason, PluginData, User};
+use mumcord_protocol::{DisconnectReason, PluginData, User, UserChange};
 
 use super::*;
 
@@ -10,36 +10,51 @@ const BOT: u32 = 1;
 const ALICE: u32 = 2;
 const BOB: u32 = 3;
 const OFFICIAL: u32 = 4;
+const NO_CERT: u32 = 5;
+const RID: &str = "0123456789abcdef";
 
-#[derive(Default)]
+/// How the mock answers `POST /v1/pairs`.
+#[derive(Clone, Copy, PartialEq)]
+enum PairAnswer {
+    Ok,
+    Full,
+    RateLimited,
+    Fail,
+}
+
 struct MockRelay {
-    instance: Mutex<String>,
-    down: Mutex<bool>,
-    allowlists: Mutex<Vec<Vec<String>>>,
-    tokens: Mutex<Vec<TokenGrant>>,
+    status: Mutex<Option<Status>>,
+    pair_answer: Mutex<PairAnswer>,
+    pairs: Mutex<Vec<(String, String)>>,
+    removed: Mutex<Vec<String>>,
 }
 
 impl RelayApi for Arc<MockRelay> {
-    async fn status(&self) -> Result<String> {
-        if *self.down.lock().expect("lock") {
-            bail!("down");
+    async fn status(&self) -> Result<Status> {
+        match self.status.lock().expect("lock").clone() {
+            Some(status) => Ok(status),
+            None => bail!("down"),
         }
-        Ok(self.instance.lock().expect("lock").clone())
     }
 
-    async fn put_allowlist(&self, hashes: &[String]) -> Result<()> {
-        if *self.down.lock().expect("lock") {
-            bail!("down");
+    async fn create_pair(&self, a: &str, b: &str) -> Result<Pair, PairError> {
+        self.pairs
+            .lock()
+            .expect("lock")
+            .push((a.to_owned(), b.to_owned()));
+        match *self.pair_answer.lock().expect("lock") {
+            PairAnswer::Ok => Ok(Pair {
+                tok: "T".repeat(43),
+                expires_in: 120,
+            }),
+            PairAnswer::Full => Err(PairError::Full),
+            PairAnswer::RateLimited => Err(PairError::RateLimited),
+            PairAnswer::Fail => Err(PairError::Unavailable(anyhow::anyhow!("down"))),
         }
-        self.allowlists.lock().expect("lock").push(hashes.to_vec());
-        Ok(())
     }
 
-    async fn register_token(&self, grant: &TokenGrant) -> Result<()> {
-        if *self.down.lock().expect("lock") {
-            bail!("down");
-        }
-        self.tokens.lock().expect("lock").push(grant.clone());
+    async fn remove_peer(&self, hash: &str) -> Result<()> {
+        self.removed.lock().expect("lock").push(hash.to_owned());
         Ok(())
     }
 }
@@ -72,30 +87,33 @@ impl Link for Arc<MockLink> {
     }
 }
 
-fn config() -> PeerConfig {
-    PeerConfig {
-        udp: vec!["relay.test:3478".into()],
-        tcp: vec!["relay.test:443".into()],
-        fingerprint: "ab".repeat(32),
-        api_url: "http://127.0.0.1:1".into(),
-        secret_file: "/nonexistent".into(),
-        token_ttl_secs: 120,
-    }
-}
-
 fn cert(name: &str) -> Option<String> {
     Some(format!("{name:0>40}"))
 }
 
-type Setup = (
-    Peer<Arc<MockRelay>, Arc<MockLink>>,
-    Arc<MockRelay>,
-    Arc<MockLink>,
-);
+fn status(boot_id: &str) -> Status {
+    Status {
+        boot_id: boot_id.into(),
+        host: "relay.test".into(),
+        udp: 443,
+        tcp: 443,
+        fp: "ab".repeat(32),
+    }
+}
+
+struct Setup {
+    peer: Peer<Arc<MockRelay>, Arc<MockLink>>,
+    relay: Arc<MockRelay>,
+    link: Arc<MockLink>,
+}
 
 fn setup() -> Setup {
-    let relay = Arc::new(MockRelay::default());
-    *relay.instance.lock().expect("lock") = "one".into();
+    let relay = Arc::new(MockRelay {
+        status: Mutex::new(Some(status("one"))),
+        pair_answer: Mutex::new(PairAnswer::Ok),
+        pairs: Mutex::default(),
+        removed: Mutex::default(),
+    });
     let link = Arc::new(MockLink::default());
     *link.users.lock().expect("lock") = Some(Users {
         own: BOT,
@@ -103,11 +121,12 @@ fn setup() -> Setup {
             (BOT, cert("b0")),
             (ALICE, cert("a1")),
             (BOB, cert("b1")),
-            (OFFICIAL, None),
+            (OFFICIAL, cert("c1")),
+            (NO_CERT, None),
         ]),
     });
-    let peer = Peer::new(config(), Arc::clone(&relay), Arc::clone(&link)).expect("peer");
-    (peer, relay, link)
+    let peer = Peer::new(Arc::clone(&relay), Arc::clone(&link));
+    Setup { peer, relay, link }
 }
 
 fn plugin(sender: u32, id: &str, data: &[u8]) -> Event {
@@ -122,202 +141,227 @@ fn hello(sender: u32) -> Event {
     plugin(
         sender,
         "mumcord.hello",
-        br#"{"app":"mumcord","v":1,"features":[]}"#,
+        br#"{"app":"mumcord","v":1,"features":["p2p"]}"#,
     )
 }
 
-fn request(sender: u32, id: u32, peer: u32) -> Event {
+fn request(sender: u32, peer: u32) -> Event {
     plugin(
         sender,
         "mumcord.peer",
-        format!(r#"{{"v":1,"t":"token_req","id":{id},"peer":{peer}}}"#).as_bytes(),
+        format!(r#"{{"v":1,"t":"token-req","rid":"{RID}","peer":{peer}}}"#).as_bytes(),
     )
 }
 
-#[tokio::test]
-async fn a_hello_gets_the_relay_once_and_only_to_that_client() {
-    let (mut peer, _, link) = setup();
-    let now = Instant::now();
-    peer.on_event(hello(ALICE), now).await;
-    peer.on_event(hello(ALICE), now).await;
-    peer.on_event(plugin(BOB, "mumcord.hello", b"{}"), now)
-        .await;
-    let sent = link.take_sent();
-    assert_eq!(sent.len(), 1, "{sent:?}");
-    assert_eq!(sent[0].0, vec![ALICE]);
-    assert_eq!(sent[0].1["t"], "relay");
-    assert_eq!(sent[0].1["udp"][0], "relay.test:3478");
-    assert_eq!(sent[0].1["tcp"][0], "relay.test:443");
-    assert_eq!(sent[0].1["fp"], "ab".repeat(32));
-    assert_eq!(peer.clients().iter().copied().collect::<Vec<_>>(), [ALICE]);
+fn user(session: u32, cert_hash: Option<String>) -> User {
+    User {
+        session,
+        cert_hash,
+        ..User::default()
+    }
+}
+
+fn removed(session: u32, cert_hash: Option<String>) -> Event {
+    Event::UserRemoved {
+        user: user(session, cert_hash),
+        actor: None,
+        reason: None,
+        ban: false,
+    }
+}
+
+/// Alice and Bob said hello, the relay is up; nothing sent so far is kept.
+async fn ready() -> Setup {
+    let mut s = setup();
+    s.peer.check_status().await;
+    for session in [ALICE, BOB] {
+        s.peer.on_event(hello(session), Instant::now()).await;
+    }
+    s.link.take_sent();
+    s
 }
 
 #[tokio::test]
-async fn a_token_is_registered_for_the_pair_and_sent_to_both() {
-    let (mut peer, relay, link) = setup();
+async fn a_p2p_hello_gets_the_announcement_once_and_only_to_that_client() {
+    let mut s = setup();
     let now = Instant::now();
-    peer.on_event(hello(ALICE), now).await;
-    peer.on_event(hello(BOB), now).await;
-    link.take_sent();
-    peer.on_event(request(ALICE, 7, BOB), now).await;
-    let grants = relay.tokens.lock().expect("lock").clone();
-    assert_eq!(grants.len(), 1);
-    assert_eq!(
-        (grants[0].a.clone(), grants[0].b.clone()),
-        (cert("a1").expect("a"), cert("b1").expect("b"))
+    s.peer.on_event(hello(ALICE), now).await;
+    assert!(
+        s.link.take_sent().is_empty(),
+        "nothing to announce before the relay answered"
     );
-    assert_eq!(grants[0].token.len(), 64);
-    let ttl = grants[0].expires_at - unix_now();
-    assert!((115..=120).contains(&ttl), "{ttl}");
-    let sent = link.take_sent();
+    s.peer.check_status().await;
+    let sent = s.link.take_sent();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].0, vec![ALICE]);
+    assert_eq!(
+        sent[0].1,
+        serde_json::json!({"v":1,"t":"relay","host":"relay.test","udp":443,"tcp":443,
+            "fp":"ab".repeat(32),"state":"up","seq":1})
+    );
+    s.peer.on_event(hello(ALICE), now).await;
+    let no_p2p = br#"{"app":"mumcord","v":1,"features":[]}"#;
+    s.peer
+        .on_event(plugin(OFFICIAL, "mumcord.hello", no_p2p), now)
+        .await;
+    assert!(
+        s.link.take_sent().is_empty(),
+        "repeated or non-P2P hellos get nothing"
+    );
+    s.peer.on_event(hello(BOB), now).await;
+    let sent = s.link.take_sent();
+    assert_eq!(sent[0].0, vec![BOB]);
+    assert_eq!(sent[0].1["seq"], 1);
+    assert_eq!(s.peer.clients(), vec![ALICE, BOB]);
+}
+
+#[tokio::test]
+async fn every_relay_change_is_announced_to_all_in_one_message() {
+    let mut s = ready().await;
+    s.peer.check_status().await;
+    assert!(s.link.take_sent().is_empty(), "unchanged status");
+
+    *s.relay.status.lock().expect("lock") = Some(status("two"));
+    s.peer.check_status().await;
+    let sent = s.link.take_sent();
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0].0, vec![ALICE, BOB]);
-    let json = &sent[0].1;
-    assert_eq!(
-        (json["t"].clone(), json["id"].clone()),
-        ("token".into(), 7.into())
+    assert_eq!(sent[0].1["state"], "up");
+    assert_eq!(sent[0].1["seq"], 2);
+
+    let mut moved = status("two");
+    moved.host = "relay2.test".into();
+    *s.relay.status.lock().expect("lock") = Some(moved);
+    s.peer.check_status().await;
+    assert_eq!(s.link.take_sent()[0].1["host"], "relay2.test");
+
+    *s.relay.status.lock().expect("lock") = None;
+    s.peer.check_status().await;
+    assert!(
+        s.link.take_sent().is_empty(),
+        "one failed poll is not down yet"
     );
-    assert_eq!(
-        (json["a"].clone(), json["b"].clone()),
-        (ALICE.into(), BOB.into())
-    );
-    assert_eq!(json["token"], grants[0].token);
-    assert_eq!(json["exp"], grants[0].expires_at);
+    s.peer.check_status().await;
+    let sent = s.link.take_sent();
+    assert_eq!(sent[0].0, vec![ALICE, BOB]);
+    assert_eq!(sent[0].1["state"], "down");
+    assert_eq!(sent[0].1["seq"], 4);
+    s.peer.check_status().await;
+    assert!(s.link.take_sent().is_empty(), "down is announced once");
+
+    *s.relay.status.lock().expect("lock") = Some(status("three"));
+    s.peer.check_status().await;
+    let sent = s.link.take_sent();
+    assert_eq!(sent[0].1["state"], "up");
+    assert_eq!(sent[0].1["seq"], 5);
 }
 
 #[tokio::test]
-async fn bad_requests_are_denied_with_a_reason() {
-    let (mut peer, relay, link) = setup();
-    let now = Instant::now();
-    for session in [ALICE, BOB] {
-        peer.on_event(hello(session), now).await;
-    }
-    link.take_sent();
+async fn a_token_from_the_relay_goes_to_both_of_the_pair() {
+    let mut s = ready().await;
+    s.peer.on_event(request(ALICE, BOB), Instant::now()).await;
+    assert_eq!(
+        *s.relay.pairs.lock().expect("lock"),
+        vec![(cert("a1").expect("a"), cert("b1").expect("b"))]
+    );
+    let sent = s.link.take_sent();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].0, vec![ALICE, BOB]);
+    assert_eq!(
+        sent[0].1,
+        serde_json::json!({"v":1,"t":"token","rid":RID,"a":ALICE,"b":BOB,
+            "tok":"T".repeat(43),"ttl":120})
+    );
+}
+
+#[tokio::test]
+async fn refused_requests_get_the_reason_and_reach_only_the_requester() {
+    let mut s = ready().await;
+    s.peer.on_event(hello(NO_CERT), Instant::now()).await;
+    s.link.take_sent();
     let cases = [
-        (request(ALICE, 1, ALICE), "unknown_peer"),
-        (request(ALICE, 2, BOT), "unknown_peer"),
-        (request(ALICE, 3, 99), "unknown_peer"),
-        // Online, but never sent a hello: not a Mumcord client.
-        (request(ALICE, 4, OFFICIAL), "unknown_peer"),
-        (request(OFFICIAL, 5, ALICE), "no_cert"),
+        (request(ALICE, ALICE), "denied"),
+        (request(ALICE, BOT), "denied"),
+        (request(OFFICIAL, ALICE), "denied"),
+        (request(NO_CERT, ALICE), "denied"),
+        (request(ALICE, NO_CERT), "denied"),
+        (request(ALICE, 99), "peer-gone"),
+        (request(BOB, OFFICIAL), "peer-not-mumcord"),
     ];
     for (event, reason) in cases {
-        peer.on_event(event, now).await;
-        let sent = link.take_sent();
+        s.peer.on_event(event, Instant::now()).await;
+        let sent = s.link.take_sent();
         assert_eq!(sent.len(), 1);
-        assert_eq!(sent[0].1["t"], "deny");
-        assert_eq!(sent[0].1["reason"], reason);
+        assert_eq!(
+            sent[0].1,
+            serde_json::json!({"v":1,"t":"token-err","rid":RID,"r":reason})
+        );
     }
-    *relay.down.lock().expect("lock") = true;
-    peer.on_event(request(BOB, 6, ALICE), now).await;
-    let sent = link.take_sent();
-    assert_eq!(
-        (sent[0].0.clone(), sent[0].1["reason"].clone()),
-        (vec![BOB], "relay_unavailable".into())
-    );
-    assert!(relay.tokens.lock().expect("lock").is_empty());
+    assert!(s.relay.pairs.lock().expect("lock").is_empty());
+
+    for (answer, reason) in [
+        (PairAnswer::Full, "relay-full"),
+        (PairAnswer::RateLimited, "rate-limited"),
+        (PairAnswer::Fail, "relay-down"),
+    ] {
+        *s.relay.pair_answer.lock().expect("lock") = answer;
+        s.peer.on_event(request(BOB, ALICE), Instant::now()).await;
+        let sent = s.link.take_sent();
+        assert_eq!(sent[0].0, vec![BOB]);
+        assert_eq!(sent[0].1["r"], reason);
+    }
 }
 
 #[tokio::test]
-async fn requests_are_limited_per_certificate_and_minute() {
-    let (mut peer, _, link) = setup();
-    let now = Instant::now();
-    for session in [ALICE, BOB] {
-        peer.on_event(hello(session), now).await;
-    }
-    link.take_sent();
-    for id in 0..REQUESTS_PER_MINUTE as u32 + 1 {
-        peer.on_event(request(ALICE, id, BOB), now).await;
-    }
-    let sent = link.take_sent();
-    assert_eq!(sent.last().expect("sent").1["reason"], "rate_limited");
-    assert_eq!(
-        sent.iter().filter(|(_, j)| j["t"] == "token").count(),
-        REQUESTS_PER_MINUTE
-    );
-    peer.on_event(request(ALICE, 99, BOB), now + Duration::from_secs(61))
-        .await;
-    assert_eq!(link.take_sent()[0].1["t"], "token");
+async fn a_down_relay_is_not_asked_for_tokens() {
+    let mut s = ready().await;
+    *s.relay.status.lock().expect("lock") = None;
+    s.peer.check_status().await;
+    s.peer.check_status().await;
+    s.link.take_sent();
+    s.peer.on_event(request(ALICE, BOB), Instant::now()).await;
+    assert_eq!(s.link.take_sent()[0].1["r"], "relay-down");
+    assert!(s.relay.pairs.lock().expect("lock").is_empty());
 }
 
 #[tokio::test]
-async fn the_allowlist_follows_joins_and_leaves_and_is_retried() {
-    let (mut peer, relay, link) = setup();
+async fn requests_are_limited_per_session_and_minute() {
+    let mut s = ready().await;
     let now = Instant::now();
-    peer.tick(now).await;
-    let expected = vec![cert("a1").expect("a"), cert("b1").expect("b")];
-    assert_eq!(
-        *relay.allowlists.lock().expect("lock"),
-        vec![expected.clone()]
-    );
-    // Unchanged users: nothing is pushed again.
-    peer.on_event(Event::Disconnected(DisconnectReason::Closed), now)
+    for _ in 0..=REQUESTS_PER_MINUTE {
+        s.peer.on_event(request(ALICE, BOB), now).await;
+    }
+    let sent = s.link.take_sent();
+    let tokens = sent.iter().filter(|(_, json)| json["t"] == "token").count();
+    assert_eq!(tokens, REQUESTS_PER_MINUTE);
+    assert_eq!(sent.last().expect("sent").1["r"], "rate-limited");
+    s.peer
+        .on_event(request(ALICE, BOB), now + Duration::from_secs(61))
         .await;
-    peer.tick(now + Duration::from_secs(2)).await;
-    assert_eq!(relay.allowlists.lock().expect("lock").len(), 1);
+    assert_eq!(s.link.take_sent()[0].1["t"], "token");
+}
 
-    peer.on_event(hello(BOB), now).await;
-    link.users
-        .lock()
-        .expect("lock")
-        .as_mut()
-        .expect("users")
-        .certs
-        .remove(&BOB);
-    let user = User {
-        session: BOB,
-        ..User::default()
+#[tokio::test]
+async fn leaving_or_changing_certificate_drops_the_hash_at_the_relay() {
+    let mut s = ready().await;
+    let now = Instant::now();
+    let change = UserChange {
+        user: user(BOB, cert("b2")),
+        joined: false,
+        moved_from: None,
+        actor: None,
     };
-    peer.on_event(
-        Event::UserRemoved {
-            user,
-            actor: None,
-            reason: None,
-            ban: false,
-        },
-        now,
-    )
-    .await;
-    assert!(peer.clients().is_empty());
-    *relay.down.lock().expect("lock") = true;
-    peer.tick(now + Duration::from_secs(1)).await;
-    assert_eq!(relay.allowlists.lock().expect("lock").len(), 1);
-    *relay.down.lock().expect("lock") = false;
-    peer.tick(now + Duration::from_secs(5)).await;
+    s.peer.on_event(Event::UserUpdated(change), now).await;
+    s.peer.on_event(removed(ALICE, cert("a1")), now).await;
+    s.peer.on_event(removed(OFFICIAL, cert("c1")), now).await;
     assert_eq!(
-        relay.allowlists.lock().expect("lock").len(),
-        1,
-        "waits for the retry"
+        *s.relay.removed.lock().expect("lock"),
+        vec![cert("b1").expect("b"), cert("a1").expect("a")],
+        "only Mumcord P2P clients, the old hash on a change"
     );
-    peer.tick(now + Duration::from_secs(11)).await;
-    assert_eq!(
-        relay.allowlists.lock().expect("lock").last(),
-        Some(&vec![cert("a1").expect("a")])
-    );
-}
-
-#[tokio::test]
-async fn a_restarted_relay_gets_the_allowlist_and_all_clients_a_new_epoch() {
-    let (mut peer, relay, link) = setup();
-    let now = Instant::now();
-    peer.check_status(now).await;
-    peer.tick(now).await;
-    for session in [ALICE, BOB] {
-        peer.on_event(hello(session), now).await;
-    }
-    let first_epoch = link.take_sent()[0].1["epoch"].clone();
-    peer.check_status(now).await;
-    assert!(
-        link.take_sent().is_empty(),
-        "same instance: no announcement"
-    );
-
-    *relay.instance.lock().expect("lock") = "two".into();
-    peer.check_status(now).await;
-    let sent = link.take_sent();
-    assert_eq!(sent.len(), 1, "one message for everyone");
-    assert_eq!(sent[0].0, vec![ALICE, BOB]);
-    assert_ne!(sent[0].1["epoch"], first_epoch);
-    peer.tick(now).await;
-    assert_eq!(relay.allowlists.lock().expect("lock").len(), 2);
+    assert_eq!(s.peer.clients(), vec![BOB]);
+    s.peer
+        .on_event(Event::Disconnected(DisconnectReason::Closed), now)
+        .await;
+    assert!(s.peer.clients().is_empty());
 }

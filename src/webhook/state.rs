@@ -10,7 +10,7 @@ use tokio::sync::{Mutex, broadcast};
 use crate::Bot;
 use crate::bot::BROADCAST_CAPACITY;
 use crate::checks::resolve_channel;
-use crate::peer::{self, HttpRelay, Link, Users};
+use crate::peer::{Link, Users};
 use crate::webhook::MAX_MESSAGE_CHARS;
 use crate::webhook::config::{ApiKey, ChannelRef, WebhookConfig};
 use crate::webhook::http::{Api, DeliveryError, serve};
@@ -222,7 +222,7 @@ impl Link for Arc<BotApi> {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("bot is not connected"))?;
         bot.handle()
-            .send_plugin_data(receivers, peer::wire::DATA_ID, data)?;
+            .send_plugin_data(receivers, crate::peer::wire::DATA_ID, data)?;
         Ok(())
     }
 }
@@ -244,60 +244,22 @@ pub async fn run(config: Arc<WebhookConfig>) -> Result<()> {
         "webhook bot listening"
     );
     let api = Arc::new(BotApi::new(Arc::clone(&config)));
-    // Subscribed before the login: Mumcord clients greet a joining bot right away.
-    let peer = match &config.peer {
-        Some(peer_config) => Some(peer_module(peer_config, &api)?),
-        None => None,
-    };
     api.connect().await?;
-    let supervisor = {
-        let api = Arc::clone(&api);
-        async move {
-            loop {
-                if !api.connected().await {
-                    tracing::warn!("connection lost, reconnecting");
-                    if let Err(error) = api.reconnect().await {
-                        tracing::warn!(%error, "reconnect failed");
-                    }
-                }
-                tokio::time::sleep(RECONNECT_DELAY).await;
-            }
-        }
-    };
-    let peer = async {
-        match peer {
-            Some(module) => module.await,
-            None => std::future::pending().await,
-        }
-    };
     tokio::select! {
         result = serve(listener, config, Arc::clone(&api)) => result,
-        result = supervisor => result,
-        result = peer => result,
+        result = supervise(Arc::clone(&api)) => result,
     }
 }
 
-/// Builds the peer module; it starts running when the returned future is polled.
-fn peer_module(
-    config: &peer::PeerConfig,
-    api: &Arc<BotApi>,
-) -> Result<impl Future<Output = Result<()>> + use<>> {
-    if !config.api_is_local_or_tls() {
-        tracing::warn!(
-            api_url = %config.api_url,
-            "peer: relay API over plain HTTP to another host: the API secret travels in clear \
-             text, use https"
-        );
+/// Reconnects whenever the link dropped (FR-1.1); runs until the process is stopped.
+pub async fn supervise(api: Arc<BotApi>) -> Result<()> {
+    loop {
+        if !api.connected().await {
+            tracing::warn!("connection lost, reconnecting");
+            if let Err(error) = api.reconnect().await {
+                tracing::warn!(%error, "reconnect failed");
+            }
+        }
+        tokio::time::sleep(RECONNECT_DELAY).await;
     }
-    let relay = HttpRelay::new(config, config.load_secret()?)?;
-    tracing::info!(
-        addresses = config.udp.len() + config.tcp.len(),
-        "peer module on"
-    );
-    Ok(peer::run(
-        config.clone(),
-        relay,
-        Arc::clone(api),
-        api.subscribe(),
-    ))
 }

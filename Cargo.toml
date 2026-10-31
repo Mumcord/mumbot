@@ -25,10 +25,11 @@ clap = { version = "4", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }
 toml = "1.1"
 serde_json = "1"
-# Peer module: the relay API (mumpeer) over HTTPS with the same rustls/ring stack, and random
-# session tokens.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-getrandom = "0.3"
+# Peer bot: TLS to the relay API with a pinned certificate, on the rustls/ring stack that
+# mumcord-protocol already brings in (no extra crypto library).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
+ring = "0.17"
 
 [dev-dependencies]
 tempfile = "3"
