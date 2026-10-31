@@ -1,6 +1,6 @@
 //! Peer bot against the local 1.5 test server and a mock relay API. Start the server first
 //! (`testenv/up.sh`), then:
-//! `MUMBOT_LIVE=1 cargo test --test peer_live -- --ignored --test-threads=1`
+//! `MUMBOT_LIVE=1 cargo test --features tester --test peer_live -- --ignored --test-threads=1`
 //!
 //! Two test bots play Mumcord clients: they send a Mumcord hello with `p2p`, get the relay
 //! announcement, and one asks for a token for the other. The mock relay checks the API calls

@@ -1,6 +1,6 @@
 //! Channel passwords (Mumble access tokens) in the webhook bot, against the local test server.
 //! Start it first (`testenv/up.sh`), then:
-//! `MUMBOT_LIVE=1 cargo test --test webhook_tokens -- --ignored --test-threads=1`
+//! `MUMBOT_LIVE=1 cargo test --features tester --test webhook_tokens -- --ignored --test-threads=1`
 //!
 //! Spec 03 addendum: the bot presents the configured `[[token]]` passwords at login, so a channel
 //! that only the token group may enter becomes usable for it. A bot without the password stays

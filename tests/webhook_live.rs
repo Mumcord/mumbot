@@ -1,5 +1,5 @@
 //! Webhook bot against the local 1.5 test server. Start it first (`testenv/up.sh`), then:
-//! `MUMBOT_LIVE=1 cargo test --test webhook_live -- --ignored --test-threads=1`
+//! `MUMBOT_LIVE=1 cargo test --features tester --test webhook_live -- --ignored --test-threads=1`
 //!
 //! Checks the acceptance criteria of `specs/01-webhook-specification.md` in the running bot:
 //! AC-1.1 connection and reconnect, AC-1.2 message reaches the channel chat, AC-1.3 status codes,

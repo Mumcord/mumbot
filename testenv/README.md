@@ -20,12 +20,12 @@ On the first start `up.sh` writes the channels Lobby (id 1), Raid (id 2) and AFK
 ## Live tests
 
     testenv/up.sh
-    MUMBOT_LIVE=1 cargo test -- --ignored --test-threads=1
+    MUMBOT_LIVE=1 cargo test --features tester -- --ignored --test-threads=1
 
 ## Parallel instances
 
     MUMBOT_PORT_BASE=44838 MUMBOT_PROJECT=qa1 testenv/up.sh
-    MUMBOT_PORT_BASE=44838 MUMBOT_LIVE=1 cargo test -- --ignored --test-threads=1
+    MUMBOT_PORT_BASE=44838 MUMBOT_LIVE=1 cargo test --features tester -- --ignored --test-threads=1
     MUMBOT_PROJECT=qa1 testenv/down.sh
 
 - `MUMBOT_PORT_BASE` (default 44738): host port of the server; the live tests read the same variable.
