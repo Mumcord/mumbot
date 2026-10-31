@@ -1,10 +1,14 @@
 //! Conditions over the observed server state, used by the `Bot::wait_*` helpers and the CLI's
-//! `expect` subcommand.
+//! `expect` subcommand. Channel and user lookup are shared with the production modules; the
+//! user and message checks belong to the test bot (`tester` feature).
 
 use anyhow::{Result, anyhow, bail};
-use mumcord_protocol::{ServerState, TextMessage, User};
+#[cfg(feature = "tester")]
+use mumcord_protocol::TextMessage;
+use mumcord_protocol::{ServerState, User};
 
 /// Expected state of another user; unset fields are not checked.
+#[cfg(feature = "tester")]
 #[derive(Debug, Clone, Default, PartialEq, clap::Args)]
 pub struct UserCheck {
     /// Channel the user is in (name or `Root/Path/Name`).
@@ -39,6 +43,7 @@ pub struct UserCheck {
     pub cert_hash: Option<String>,
 }
 
+#[cfg(feature = "tester")]
 impl UserCheck {
     pub fn matches(&self, user: &User, state: &ServerState) -> bool {
         let in_channel = |name: &Option<String>| {
@@ -77,6 +82,7 @@ impl UserCheck {
 }
 
 /// Expected received text message; unset fields are not checked.
+#[cfg(feature = "tester")]
 #[derive(Debug, Clone, Default, PartialEq, clap::Args)]
 pub struct MessageCheck {
     /// Sender's user name.
@@ -93,6 +99,7 @@ pub struct MessageCheck {
     pub channel: Option<String>,
 }
 
+#[cfg(feature = "tester")]
 impl MessageCheck {
     pub fn matches(&self, msg: &TextMessage, state: &ServerState) -> bool {
         let sender = msg.actor.and_then(|s| state.users.get(&s));
@@ -148,7 +155,9 @@ pub fn find_user<'a>(state: &'a ServerState, name: &str) -> Option<&'a User> {
 
 #[cfg(test)]
 mod tests {
-    use mumcord_protocol::{Channel, TextTarget};
+    use mumcord_protocol::Channel;
+    #[cfg(feature = "tester")]
+    use mumcord_protocol::TextTarget;
 
     use super::*;
 
@@ -199,6 +208,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "tester")]
     fn user_check_compares_each_field() {
         let s = state();
         let user = find_user(&s, "alice").expect("user");
@@ -249,6 +259,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "tester")]
     fn message_check_filters_sender_target_and_text() {
         let s = state();
         let msg = TextMessage {

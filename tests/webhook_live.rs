@@ -40,6 +40,7 @@ fn rand_suffix() -> u32 {
 /// Bot under test: key `ci` may write to Lobby only, listener on loopback.
 fn config(dir: &std::path::Path, name: &str) -> Arc<WebhookConfig> {
     Arc::new(WebhookConfig {
+        modules: Default::default(),
         server: ServerConfig {
             host: env::HOST.to_owned(),
             port: env::test_port(),

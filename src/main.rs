@@ -1,5 +1,7 @@
-//! `mumbot`: runs a headless Mumble bot. `webhook` runs the webhook bot; every other subcommand
+//! `mumbot`: runs a headless Mumble bot. `webhook`, `peer` and `run` start the production modules
+//! (`specs/03-modules-specification.md`); with the `tester` feature, every other subcommand
 //! drives the scripted test bot from the shell (Mumcord's E2E and smoke tests, manual checks).
+//! The main build answers those with a pointer to the tester build.
 //!
 //! A test-bot run connects once, executes one subcommand (or, with `script`, one subcommand per
 //! stdin line), optionally stays connected for `--hold` seconds and exits non-zero on the first
@@ -7,6 +9,7 @@
 //! output and exit codes must stay exactly as they are. Each area of the test bot has its own
 //! module in `cli/`; their subcommands are flattened into the top level for that compatibility.
 
+#[cfg(feature = "tester")]
 mod cli;
 
 use std::path::PathBuf;
@@ -14,17 +17,30 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
-use mumbot::webhook::{self, WebhookConfig};
-use mumbot::{Bot, BotConfig, env};
+use clap::{Args, Parser, Subcommand};
+use mumbot::webhook::WebhookConfig;
+use mumbot::{Bot, BotConfig, Module, env, modules};
 
 #[derive(Parser, Debug)]
 #[command(
     name = "mumbot",
     version,
-    about = "Headless bots for standard Mumble servers: the webhook bot and a scripted test bot"
+    about = "Headless bots for standard Mumble servers: webhook and peer modules, and a scripted \
+             test bot in the tester build"
 )]
 struct Cli {
+    #[command(flatten)]
+    connection: Connection,
+    /// Stay connected this many seconds after the command(s).
+    #[arg(long, default_value_t = 0)]
+    hold: u64,
+    #[command(subcommand)]
+    command: Command,
+}
+
+/// Where and as whom a command-line run logs in; the modules read this from their config file.
+#[derive(Args, Debug)]
+struct Connection {
     #[arg(long, default_value = env::HOST)]
     host: String,
     /// Server port (the local test server of this repository listens on 44738).
@@ -42,54 +58,93 @@ struct Cli {
     /// Timeout in seconds for login and for each wait.
     #[arg(long, default_value_t = 10)]
     timeout: u64,
-    /// Stay connected this many seconds after the command(s).
-    #[arg(long, default_value_t = 0)]
-    hold: u64,
-    #[command(subcommand)]
-    command: Command,
 }
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Run the webhook bot: an HTTP API that posts messages into channels, see docs/webhook.md.
-    /// Ignores the connection options above; the config file holds them.
+    /// Run the webhook module alone: an HTTP API that posts messages into channels, see
+    /// docs/webhook.md. Ignores the connection options above; the config file holds them.
     Webhook {
         /// TOML config file with the server settings and the API keys.
         #[arg(long, env = "MUMBOT_CONFIG")]
         config: PathBuf,
     },
-    /// Run the peer bot: announces a mumpeer relay to Mumcord clients and hands out relay
-    /// tokens, see docs/peer.md. Ignores the connection options above.
+    /// Run the peer module alone: announces a mumpeer relay to Mumcord clients and hands out
+    /// relay tokens, see docs/peer.md. Ignores the connection options above.
     Peer {
         /// TOML config file with the server settings and the `[peer]` section.
         #[arg(long, env = "MUMBOT_CONFIG")]
         config: PathBuf,
     },
+    /// Run several modules on one connection, see docs/modules.md. Ignores the connection
+    /// options above.
+    Run {
+        /// TOML config file with the server settings and one section per module.
+        #[arg(long, env = "MUMBOT_CONFIG")]
+        config: PathBuf,
+        /// Modules to run, comma-separated; replaces the config's `[modules] enabled` list.
+        #[arg(long, env = "MUMBOT_MODULES", value_delimiter = ',')]
+        modules: Vec<Module>,
+    },
+    #[cfg(feature = "tester")]
     #[command(flatten)]
     Test(cli::Command),
+    /// Self-register on the server under --name, with the connection options above. The peer
+    /// module's setup needs this once.
+    #[cfg(not(feature = "tester"))]
+    Register,
+    /// Any other command, answered with a pointer to the tester build.
+    #[cfg(not(feature = "tester"))]
+    #[command(external_subcommand)]
+    Tester(Vec<String>),
+}
+
+/// The main build's answer to a test command (FR-3.9 of spec 03).
+#[cfg(not(feature = "tester"))]
+fn tester_only(command: &str) -> String {
+    format!(
+        "mumbot: `{command}` is not a command of this build. The test commands (say, expect, \
+         play, script, …) are only in the tester build: the mumbot-tester release archive or \
+         the ghcr.io/mumcord/mumbot-tester image."
+    )
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let command = match cli.command {
-        Command::Webhook { config } => {
-            tracing_subscriber::fmt()
-                .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-                .init();
-            let config = Arc::new(WebhookConfig::load(&config)?);
-            return webhook::run(config).await;
+    let (config, chosen) = match cli.command {
+        Command::Webhook { config } => (config, vec![Module::Webhook]),
+        Command::Peer { config } => (config, vec![Module::Peer]),
+        Command::Run { config, modules } => (config, modules),
+        #[cfg(feature = "tester")]
+        Command::Test(command) => {
+            let hold = Duration::from_secs(cli.hold);
+            let bot = connect(cli.connection).await?;
+            return cli::run_top_level(bot, command, hold).await;
         }
-        Command::Peer { config } => {
-            tracing_subscriber::fmt()
-                .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-                .init();
-            let config = Arc::new(WebhookConfig::load_peer(&config)?);
-            return mumbot::peer::run_bot(config).await;
+        #[cfg(not(feature = "tester"))]
+        Command::Register => {
+            let hold = Duration::from_secs(cli.hold);
+            let bot = connect(cli.connection).await?;
+            bot.register().await?;
+            tokio::time::sleep(hold).await;
+            return bot.disconnect().await;
         }
-        Command::Test(command) => command,
+        #[cfg(not(feature = "tester"))]
+        Command::Tester(args) => {
+            eprintln!("{}", tester_only(args.first().map_or("", String::as_str)));
+            std::process::exit(2);
+        }
     };
-    let bot = Bot::connect(BotConfig {
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+    let config = Arc::new(WebhookConfig::load(&config, &chosen)?);
+    modules::run(config).await
+}
+
+async fn connect(cli: Connection) -> Result<Bot> {
+    Bot::connect(BotConfig {
         host: cli.host,
         port: cli.port,
         name: cli.name,
@@ -101,8 +156,7 @@ async fn main() -> Result<()> {
         server_cert_sha256: None,
         timeout: Duration::from_secs(cli.timeout),
     })
-    .await?;
-    cli::run_top_level(bot, command, Duration::from_secs(cli.hold)).await
+    .await
 }
 
 #[cfg(test)]
@@ -114,11 +168,48 @@ mod tests {
         <Cli as clap::CommandFactory>::command().debug_assert();
     }
 
+    fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
+        Cli::try_parse_from(std::iter::once("mumbot").chain(args.iter().copied()))
+    }
+
+    #[test]
+    fn modules_are_chosen_by_command() {
+        for args in [
+            &["webhook", "--config", "bot.toml"][..],
+            &["peer", "--config", "bot.toml"],
+            &["run", "--config", "bot.toml"],
+        ] {
+            assert!(parse(args).is_ok(), "{args:?}");
+        }
+        let cli = parse(&["run", "--config", "bot.toml", "--modules", "webhook,peer"])
+            .expect("run with modules");
+        assert!(matches!(
+            cli.command,
+            Command::Run { modules, .. } if modules == [Module::Webhook, Module::Peer]
+        ));
+        assert!(parse(&["run", "--config", "bot.toml", "--modules", "music"]).is_err());
+    }
+
+    #[cfg(not(feature = "tester"))]
+    #[test]
+    fn the_main_build_points_test_commands_to_the_tester_build() {
+        let cli = parse(&["say", "--channel", "Lobby", "hi"]).expect("caught");
+        let Command::Tester(args) = cli.command else {
+            panic!("not caught: {:?}", cli.command);
+        };
+        assert!(tester_only(&args[0]).contains("`say`"));
+        assert!(tester_only(&args[0]).contains("mumbot-tester"));
+        assert!(matches!(
+            parse(&["--name", "RelayBot", "register"])
+                .expect("register")
+                .command,
+            Command::Register
+        ));
+    }
+
+    #[cfg(feature = "tester")]
     #[test]
     fn test_subcommands_stay_at_the_top_level() {
-        let parse = |args: &[&str]| {
-            Cli::try_parse_from(std::iter::once("mumbot").chain(args.iter().copied()))
-        };
         for args in [
             &["--port", "1", "connect"][..],
             &["say", "--channel", "Lobby", "<b>x</b>"],
