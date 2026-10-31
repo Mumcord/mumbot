@@ -8,9 +8,8 @@ user, one client certificate, one reconnect loop.
 | --- | --- | --- |
 | `webhook` | HTTP API that posts messages into channels ([webhook.md](webhook.md)). | `[http]`, at least one `[[keys]]` |
 | `peer` | Announces a mumpeer relay to Mumcord clients and hands out relay tokens ([peer.md](peer.md)). | `[peer]`, `server.server_cert_sha256` |
+| `history` | Records the chat of chosen channels and answers Mumcord's history sync ([history.md](history.md)). | `[history]` |
 | `music` | HTTP API that plays MP3s as voice into a channel, with a queue ([music.md](music.md)). | `[music]` with a `media_dir` or URLs, at least one `[[music.keys]]` |
-
-The history module ([#2](https://github.com/Mumcord/mumbot/issues/2)) is planned.
 
 ## Choosing modules
 
@@ -20,6 +19,7 @@ One module:
 mumbot webhook --config bot.toml
 mumbot peer --config bot.toml
 mumbot music --config bot.toml
+mumbot history --config bot.toml
 ```
 
 Several modules, on the command line:
@@ -37,23 +37,23 @@ enabled = ["webhook", "peer"]
 ```
 
 - The command line wins: `--modules`, `MUMBOT_MODULES`, `mumbot webhook`, `mumbot peer` and
-  `mumbot music` replace the config's list.
+  `mumbot history` and `mumbot music` replace the config's list.
 - The music module moves the shared bot user into the channel of the track it plays and back to
   `server.channel` afterwards; the other modules work the same from any channel.
 - Only the sections of the chosen modules are checked, so one `bot.toml` can hold settings for
   modules that do not run.
 - `mumbot run` without any choice stops with an error that names both ways to choose.
 - When one module fails, the whole bot stops (Docker's restart policy brings it back).
-- `server.server_cert_sha256` is required with `peer` and then protects the shared connection;
-  the webhook module alone rejects it (it does not pin yet).
+- `server.server_cert_sha256` is required with `peer`, optional with `history`, and then protects
+  the shared connection; the webhook module alone rejects it (it does not pin yet).
 
 Existing webhook setups need no change: `[modules]` is optional and the Docker image still runs
 `webhook` by default. To run several modules in Docker, set the command to `run` and list the
 modules in `[modules]` or in `MUMBOT_MODULES`.
 
 The image's health check asks the webhook module's `/health` on port 8080; when the webhook
-module does not run, replace it (the music module answers `/health` on its own port, see
-[`examples/music/`](../examples/music/)) or disable it.
+module does not run, disable it (as [`examples/history/`](../examples/history/) does) or replace it
+(the music module answers `/health` on its own port, see [`examples/music/`](../examples/music/)).
 
 ## The two builds
 

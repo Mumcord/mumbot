@@ -39,6 +39,14 @@ All notable changes to Mumbot are listed here. The format follows
 - Tester build (#16): every release ships `mumbot-tester-<version>-<platform>` archives and the
   image `ghcr.io/mumcord/mumbot-tester` next to the main ones. Built with the Cargo feature
   `tester`.
+- History bot `mumbot history --config bot.toml` (#2): records the chat of the channels listed in
+  the new `[history]` section in a local SQLite file and answers Mumcord's history sync over
+  plugin data (`mumcord.history`), so Mumcord users who were offline can load what they missed.
+  Never records private messages or voice, keeps messages at most 7 days (`retention_days`,
+  `max_messages_per_channel`) and says so in its comment. Runs alone or with other modules
+  (`mumbot run --modules history,…`). See `docs/history.md` and the Docker Compose example
+  `examples/history/`.
+- `server.server_cert_sha256` is also accepted with the history module.
 
 ### Changed
 

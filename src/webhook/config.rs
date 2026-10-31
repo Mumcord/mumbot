@@ -11,6 +11,7 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
 use crate::Module;
+use crate::history::HistoryConfig;
 use crate::music::MusicConfig;
 use crate::peer::PeerConfig;
 use crate::voice_settings::VoiceConfig;
@@ -44,6 +45,10 @@ pub struct WebhookConfig {
     /// The music module; ignored unless it runs.
     #[serde(default)]
     pub music: Option<MusicConfig>,
+    /// The history module; ignored unless it runs.
+    #[serde(default)]
+    pub history: Option<HistoryConfig>,
+
     /// Bitrate and packet length of every module that sends voice (a module can override them
     /// in its own section).
     #[serde(default)]
@@ -183,11 +188,12 @@ impl WebhookConfig {
             // Pinning is the peer module's requirement (mumcord spec 04, FR-4.28); for the
             // webhook alone it is a later decision (roadmap, "Server certificate check"), so a
             // pin here would only look like protection. With the peer module it guards the
-            // shared connection.
-            if !enabled.contains(&Module::Peer) && self.server.server_cert_sha256.is_some() {
+            // shared connection, and so it does with the history module (spec 04, FR-4.3).
+            let pins = enabled.contains(&Module::Peer) || enabled.contains(&Module::History);
+            if !pins && self.server.server_cert_sha256.is_some() {
                 bail!(
-                    "server.server_cert_sha256 is only used with the peer module; remove it for \
-                     the webhook bot"
+                    "server.server_cert_sha256 is only used with the peer or history module; \
+                     remove it for the webhook bot"
                 );
             }
         }
@@ -199,6 +205,13 @@ impl WebhookConfig {
                 bail!("config has no [music] section");
             };
             music.validate()?;
+        }
+        if enabled.contains(&Module::History) {
+            let Some(history) = &self.history else {
+                bail!("config has no [history] section");
+            };
+            history.validate()?;
+            self.server_cert_pin()?;
         }
         Ok(())
     }
@@ -576,6 +589,26 @@ channels = ["Lobby"]
             toml::from_str::<WebhookConfig>("[modules]\nenabled = [\"radio\"]").is_err(),
             "an unknown module is reported"
         );
+    }
+
+    #[test]
+    fn the_history_module_needs_its_section_and_may_pin() {
+        let mut config = both();
+        config.modules.enabled = vec![Module::History];
+        let error = config.validate_modules().expect_err("no [history]");
+        assert!(error.to_string().contains("[history]"), "{error}");
+
+        let text = format!(
+            "{}\n[history]\nchannels = [\"Lobby\"]\n",
+            BOTH.replace("PIN", &"ab".repeat(32))
+        );
+        let mut config: WebhookConfig = toml::from_str(&text).expect("config");
+        config.modules.enabled = vec![Module::Webhook, Module::History];
+        config
+            .validate_modules()
+            .expect("the pin guards the connection the history module shares");
+        config.server.server_cert_sha256 = Some("not hex".to_owned());
+        assert!(config.validate_modules().is_err(), "a bad pin is reported");
     }
 
     #[test]

@@ -64,7 +64,7 @@ This epic turns the production bots into **modules** of one bot that can run alo
 - **AC-3.4** An existing webhook config without `[modules]` still works with `mumbot webhook`.
 - **AC-3.5** A main build answers `mumbot say hi` with the tester-build message and exit code 2; `mumbot webhook`, `mumbot peer`, `mumbot run` and `mumbot register` still parse.
 - **AC-3.6** A tester build accepts every test subcommand Mumcord's E2E uses, unchanged.
-- **AC-3.7** `cargo tree` of the main build contains no `hound` (`mumcord-codec` joined the main build with the music module, `specs/04-music-specification.md` Q11).
+- **AC-3.7** `cargo tree` of the main build contains no `hound` (`mumcord-codec` joined the main build with the music module, `specs/05-music-specification.md` Q11).
 
 ## 5. Decision log
 

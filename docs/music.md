@@ -11,7 +11,7 @@ Sources:
 - **A URL** (`{"url": "https://…"}`): off by default, and then only from hosts you list.
 
 The bot is an ordinary Mumble client; nothing is installed on the server. Spec:
-[`specs/04-music-specification.md`](../specs/04-music-specification.md).
+[`specs/05-music-specification.md`](../specs/05-music-specification.md).
 
 ## Run it
 

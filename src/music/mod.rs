@@ -1,5 +1,5 @@
 //! Music module: an HTTP API that plays MP3s from a media directory, uploads or allowed URLs as
-//! voice into a channel, with a queue. Spec: `specs/04-music-specification.md`.
+//! voice into a channel, with a queue. Spec: `specs/05-music-specification.md`.
 //!
 //! The HTTP side ([`http`]) talks to the bot through [`MusicApi`] and to the [`Player`] state;
 //! the player task decodes on a thread and sends voice through the shared connection.

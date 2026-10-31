@@ -1,7 +1,7 @@
 //! Music module against the local 1.5 test server. Start it first (`testenv/up.sh`), then:
 //! `MUMBOT_LIVE=1 cargo test --features tester --test music_live -- --ignored --test-threads=1`
 //!
-//! Checks the acceptance criteria of `specs/04-music-specification.md` in the running bot:
+//! Checks the acceptance criteria of `specs/05-music-specification.md` in the running bot:
 //! AC-4.1 a played file is heard by another user, AC-4.2 queue, skip and stop, AC-4.3 refused
 //! requests, AC-4.4 music and webhook on one connection, AC-4.5 the configured bitrate.
 
@@ -87,6 +87,7 @@ fn config(
         keys: vec![key("Lobby")],
         tokens: Vec::new(),
         peer: None,
+        history: None,
         voice: Default::default(),
         music: Some(music),
     }

@@ -1,4 +1,4 @@
-# Epic 4 – Music module · Specification
+# Epic 5 – Music module · Specification
 
 > Status: Final · As of: 2026-10-31
 > Source: issue [#3](https://github.com/Mumcord/mumbot/issues/3) (music bot: play MP3 sent over HTTP)

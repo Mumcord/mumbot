@@ -1,6 +1,6 @@
 [package]
 name = "mumbot"
-description = "Headless Mumble bots for standard Mumble servers: webhook, peer and music modules, plus a scripted test bot in the tester build"
+description = "Headless Mumble bots for standard Mumble servers: webhook, peer, history and music modules, plus a scripted test bot in the tester build"
 version = "0.1.1"
 edition = "2024"
 rust-version = "1.90"
@@ -36,6 +36,9 @@ ring = "0.17"
 symphonia = { version = "0.5", default-features = false, features = ["mp3"] }
 rtrb = "0.4"
 webpki-roots = "1"
+# History module: the recorded messages in one local file, like Mumcord's own store. Bundled,
+# so the static musl builds need no system SQLite.
+rusqlite = { version = "0.41", features = ["bundled"] }
 
 [features]
 # The scripted test bot (test subcommands, voice, samples, checks, load generator). Off by

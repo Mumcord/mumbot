@@ -4,16 +4,17 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use mumcord_protocol::{Event, Handle, TextTarget, permissions};
+use mumcord_protocol::{Event, Handle, ServerState, TextTarget, permissions};
 use tokio::sync::{Mutex, broadcast};
 
-use crate::Bot;
 use crate::bot::BROADCAST_CAPACITY;
 use crate::checks::resolve_channel;
+use crate::history::{self, HistoryLink};
 use crate::peer::{Link, Users};
 use crate::webhook::MAX_MESSAGE_CHARS;
 use crate::webhook::config::{ApiKey, ChannelRef, WebhookConfig};
 use crate::webhook::http::{Api, DeliveryError};
+use crate::{Bot, Module};
 
 /// Wait between reconnect attempts (FR-1.1).
 const RECONNECT_DELAY: Duration = Duration::from_secs(2);
@@ -48,10 +49,7 @@ impl BotApi {
         let bot = Bot::connect_with(self.config.bot_config(), self.events.clone()).await?;
         let mut guard = self.bot.lock().await;
         let bot = guard.insert(bot);
-        if let Some(channel) = &self.config.server.channel {
-            bot.join(channel).await?;
-        }
-        Ok(())
+        self.settle(bot).await
     }
 
     /// Reconnects after the link dropped (FR-1.1).
@@ -61,8 +59,19 @@ impl BotApi {
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("bot is gone"))?;
         bot.reconnect_as(&self.config.server.name).await?;
+        self.settle(bot).await
+    }
+
+    /// After every login: joins the configured channel, then the history module listens to its
+    /// channels and shows its notice (spec 04, FR-4.4, FR-4.17).
+    async fn settle(&self, bot: &Bot) -> Result<()> {
         if let Some(channel) = &self.config.server.channel {
             bot.join(channel).await?;
+        }
+        if let Some(history) = &self.config.history
+            && self.config.modules.enabled.contains(&Module::History)
+        {
+            history::announce(bot, history)?;
         }
         Ok(())
     }
@@ -232,6 +241,25 @@ impl Link for Arc<BotApi> {
             .ok_or_else(|| anyhow::anyhow!("bot is not connected"))?;
         bot.handle()
             .send_plugin_data(receivers, crate::peer::wire::DATA_ID, data)?;
+        Ok(())
+    }
+}
+
+/// The history module's view of the bot (`src/history/`).
+impl HistoryLink for Arc<BotApi> {
+    async fn state(&self) -> Option<ServerState> {
+        let guard = self.bot.lock().await;
+        let bot = guard.as_ref().filter(|bot| bot.handle().is_connected())?;
+        Some(bot.state())
+    }
+
+    async fn send(&self, receivers: &[u32], data: Vec<u8>) -> Result<()> {
+        let guard = self.bot.lock().await;
+        let bot = guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("bot is not connected"))?;
+        bot.handle()
+            .send_plugin_data(receivers, history::wire::DATA_ID, data)?;
         Ok(())
     }
 }

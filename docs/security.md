@@ -7,10 +7,11 @@ What mumbot protects, what it does not (yet), and what an operator has to take c
 | Area | State |
 | --- | --- |
 | Connection to the Mumble server | Always TLS, with the bot's own client certificate. |
-| Checking the server's certificate | Only the peer bot: it requires `server.server_cert_sha256` and refuses any other certificate. The webhook and test bots accept any server certificate (see below). |
+| Checking the server's certificate | The peer bot requires `server.server_cert_sha256` and refuses any other certificate; the history bot does so when the key is set. The webhook and test bots accept any server certificate (see below). |
 | HTTP API | Plain HTTP, loopback by default; API keys in a header, compared in constant time. |
 | Secrets in files | `bot.toml`, `.env` and certificates are git-ignored; only placeholders in the repository. |
 | Logs | Request metadata only: no keys, no passwords, no message texts. |
+| Recorded chat | Only the history bot stores messages: channel messages of the listed channels, in an owner-only SQLite file, at most 7 days ([history.md](history.md)). Never private messages or voice. |
 | Docker | Non-root user (uid 10001); the examples add a read-only root filesystem, no capabilities and `no-new-privileges`. |
 
 ## API keys
@@ -81,8 +82,10 @@ rules as above) and its own `[[music.keys]]`, so a webhook key cannot play audio
 
 - The connection to the server is always TLS; there is no plaintext mode. Voice goes over UDP
   with the server's encryption, or through the TLS tunnel as fallback.
-- **Only the peer bot checks the server's certificate.** It hands out relay tokens, so it refuses
-  to start without `server.server_cert_sha256` and refuses any server with another certificate.
+- **Only the peer bot requires a check of the server's certificate.** It hands out relay tokens,
+  so it refuses to start without `server.server_cert_sha256` and refuses any server with another
+  certificate. The history bot accepts the same key and then checks too; set it, since the bot
+  hands out recorded chat.
   The webhook and test bots come from Mumcord's test bot, which only talked to self-signed local
   test servers, so they accept any server certificate without a warning. Someone who can
   intercept the network path between the bot and

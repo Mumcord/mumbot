@@ -72,6 +72,14 @@ match the pin).
 
 Runs the music API ([music.md](music.md)) until stopped, reconnects after a dropped link and exits
 non-zero only when the config is invalid, the listener cannot bind or the very first login fails.
+## `history`
+
+| Usage | Option | Meaning |
+| --- | --- | --- |
+| `mumbot history --config <CONFIG>` | `--config <CONFIG>` (env `MUMBOT_CONFIG`) | TOML config file with the server settings and the `[history]` section ([configuration.md](configuration.md#history-the-history-bot)). |
+
+Runs until stopped, reconnects after a dropped link and exits non-zero only when the config is
+invalid, the database cannot be opened or the very first login fails. See [history.md](history.md).
 
 ## `run`
 
