@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-labelledby="t">
+  <title id="t">mumbot</title>
+  <!-- Same family as the Mumcord icon: dark indigo tile, coral-to-violet body, white speech
+       element. Mumbot is the friendly robot whose face is a chat bubble. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2a1478"/>
+      <stop offset="1" stop-color="#12082f"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.42" r="0.55">
+      <stop offset="0" stop-color="#8b6cff" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#8b6cff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="1" y2="0.6">
+      <stop offset="0" stop-color="#ff9a8b"/>
+      <stop offset="1" stop-color="#8b6cff"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="118" fill="url(#tile)"/>
+  <rect width="512" height="512" rx="118" fill="url(#glow)"/>
+  <!-- Antenna -->
+  <rect x="244" y="96" width="24" height="76" rx="12" fill="#c58bd0"/>
+  <circle cx="256" cy="92" r="30" fill="#ff9a8b"/>
+  <circle cx="246" cy="82" r="9" fill="#ffffff" opacity="0.55"/>
+  <!-- Ears -->
+  <rect x="64" y="244" width="56" height="112" rx="28" fill="#ff9a8b"/>
+  <rect x="392" y="244" width="56" height="112" rx="28" fill="#8b6cff"/>
+  <!-- Head -->
+  <rect x="100" y="160" width="312" height="264" rx="92" fill="url(#body)"/>
+  <path d="M192 160h128a92 92 0 0 1 92 92v6c-40-36-96-52-156-52s-116 16-156 52v-6a92 92 0 0 1 92-92z" fill="url(#gloss)"/>
+  <!-- Face: a white chat bubble with a tail, like Mumcord's -->
+  <path d="M206 214h100a62 62 0 0 1 62 62v26a62 62 0 0 1-62 62h-72l-34 30a6 6 0 0 1-10-5l4-29a62 62 0 0 1-50-58v-26a62 62 0 0 1 62-62z" fill="#ffffff"/>
+  <circle cx="214" cy="280" r="22" fill="#1d0f5c"/>
+  <circle cx="298" cy="280" r="22" fill="#1d0f5c"/>
+  <circle cx="221" cy="272" r="7" fill="#ffffff"/>
+  <circle cx="305" cy="272" r="7" fill="#ffffff"/>
+  <path d="M226 322q30 22 60 0" fill="none" stroke="#8b6cff" stroke-width="12" stroke-linecap="round"/>
+</svg>
