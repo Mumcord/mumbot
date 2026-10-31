@@ -169,6 +169,7 @@ One TOML file (`bot.toml`, in Docker `/config/bot.toml`) with a section per conc
 | `[http]`, `[[keys]]` | The webhook module's listener and its API keys. |
 | `[[token]]` | Channel passwords (optional). |
 | `[peer]` | The mumpeer relay for the peer module. |
+| `[voice]` | Voice bitrate (`bitrate`, `--bitrate`, `MUMBOT_VOICE_BITRATE`). |
 
 Secrets such as `SERVER_PASSWORD` and `MUMBOT_PEER_API_SECRET` come from the environment. Every
 key, default and variable: [docs/configuration.md](docs/configuration.md); a commented start:

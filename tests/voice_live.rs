@@ -9,6 +9,7 @@ use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use mumbot::voice::{BotVoice, Clip, PlayOptions, rms_db};
+use mumbot::voice_settings::VoiceSettings;
 use mumbot::{Bot, BotConfig, UserCheck, env};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -112,6 +113,91 @@ async fn bot_a_speaks_and_bot_b_records_it() {
     );
     // Nothing from B itself, and A heard nothing.
     assert!(a_voice.speakers().is_empty());
+}
+
+#[tokio::test]
+#[ignore = "needs testenv and MUMBOT_LIVE=1"]
+async fn configured_bitrate_reaches_the_encoder_and_the_server_limit_wins() {
+    if !live() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (a_name, b_name) = (unique("talker"), unique("listener"));
+    let a = lobby_bot(dir.path(), &a_name).await;
+    let b = lobby_bot(dir.path(), &b_name).await;
+    b.wait_user(
+        &a_name,
+        &UserCheck {
+            in_channel: Some("Lobby".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("b sees a");
+    let a_voice = BotVoice::start(&a).await.expect("a voice");
+    let b_voice = BotVoice::start(&b).await.expect("b voice");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let clip = Clip::load(&clip_path("speech.wav")).expect("clip");
+
+    // Average payload size per packet as B receives it: the proof that the setting reached the
+    // wire, not only the encoder.
+    let mut sizes = Vec::new();
+    for bitrate_bps in [12_000, 48_000] {
+        let mut packets = b_voice.subscribe_packets();
+        let report = a_voice
+            .play(
+                &clip,
+                PlayOptions {
+                    max_duration: Some(Duration::from_secs(3)),
+                    settings: VoiceSettings {
+                        bitrate_bps,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("play");
+        assert_eq!(report.bitrate_bps, bitrate_bps, "encoder bitrate");
+        let mut bytes = Vec::new();
+        while let Ok(packet) = packets.try_recv() {
+            if !packet.is_last {
+                bytes.push(packet.payload.len());
+            }
+        }
+        assert!(bytes.len() > 20, "{} packets", bytes.len());
+        sizes.push(bytes.iter().sum::<usize>() as f64 / bytes.len() as f64);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    eprintln!("mean payload bytes at 12k / 48k: {sizes:?}");
+    assert!(sizes[1] > sizes[0] * 1.5, "{sizes:?}");
+
+    // The test server allows more than Opus can use, so the cap itself is covered by unit tests;
+    // the highest valid bitrate must still fit the server's limit with its packet overhead.
+    let limit = a
+        .state()
+        .server
+        .max_bandwidth
+        .expect("server sends its limit");
+    let report = a_voice
+        .play(
+            &clip,
+            PlayOptions {
+                max_duration: Some(Duration::from_secs(1)),
+                settings: VoiceSettings {
+                    bitrate_bps: 510_000,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("play");
+    assert!(
+        report.bitrate_bps + 14_800 <= limit,
+        "{} bit/s on a {limit} bit/s server",
+        report.bitrate_bps
+    );
 }
 
 #[tokio::test]

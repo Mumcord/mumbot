@@ -22,7 +22,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use bytes::Bytes;
 use mumcord_codec::codec::{MAX_PACKET_BYTES, OpusEncoder, PacketDuration};
 use mumcord_codec::{FRAME_SAMPLES, Frame};
-use mumcord_protocol::voice::{OutgoingAudio, VoiceEvent, VoicePacket, VoiceTransport};
+use mumcord_protocol::voice::{OutgoingAudio, Transport, VoiceEvent, VoicePacket, VoiceTransport};
 use mumcord_protocol::{Event, Handle};
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
@@ -35,10 +35,8 @@ pub use wav::Clip;
 use receive::Inbox;
 
 use crate::Bot;
+use crate::voice_settings::{Route, VoiceSettings};
 
-/// Bitrate of bot speech (bit/s).
-pub const BOT_BITRATE: i32 = 40_000;
-const PACKET_INTERVAL: Duration = Duration::from_millis(20);
 const POLL: Duration = Duration::from_millis(20);
 
 /// How [`BotVoice::play`] plays a clip.
@@ -53,6 +51,8 @@ pub struct PlayOptions {
     /// Avatar position sent with every packet (positional audio); only reaches people with
     /// the same plugin context (`Handle::set_plugin_context`).
     pub position: Option<[f32; 3]>,
+    /// Bitrate and packet length, before the server's limit is applied.
+    pub settings: VoiceSettings,
 }
 
 impl Default for PlayOptions {
@@ -62,6 +62,7 @@ impl Default for PlayOptions {
             forever: false,
             max_duration: None,
             position: None,
+            settings: VoiceSettings::default(),
         }
     }
 }
@@ -74,6 +75,8 @@ pub struct PlayReport {
     pub finished: Instant,
     /// Packets sent, including the terminator.
     pub packets: u64,
+    /// The Opus bitrate the encoder ran at (bit/s), after the server's limit.
+    pub bitrate_bps: u32,
 }
 
 /// Result of [`BotVoice::wait_audio`].
@@ -187,16 +190,32 @@ impl BotVoice {
 
     // ---- sending ----
 
-    /// Plays `clip` as 20 ms Opus packets in real time to the current channel. The last packet
-    /// carries the terminator flag; sequence numbers advance by 2 per packet (10 ms units).
+    /// Plays `clip` as Opus packets of `opts.settings.frame_ms` in real time to the current
+    /// channel. The bitrate is `opts.settings` lowered to the server's bandwidth limit, if it
+    /// has one. The last packet carries the terminator flag; sequence numbers advance in 10 ms
+    /// units.
     pub async fn play(&self, clip: &Clip, opts: PlayOptions) -> Result<PlayReport> {
         let frames = clip.frames();
         if frames.is_empty() {
             bail!("clip is empty");
         }
-        let mut encoder = OpusEncoder::new(BOT_BITRATE, PacketDuration::Ms20)
-            .map_err(|e| anyhow!("encoder: {e}"))?;
-        let mut ticker = tokio::time::interval(PACKET_INTERVAL);
+        let settings = opts.settings;
+        let (duration, frames_per_packet) = match settings.frame_ms {
+            10 => (PacketDuration::Ms10, 1),
+            _ => (PacketDuration::Ms20, 2),
+        };
+        let route = Route {
+            tcp_tunnel: self.transport.transport() == Transport::Tcp,
+            positional: opts.position.is_some(),
+        };
+        let rate = settings.capped(self.handle.with_state(|s| s.server.max_bandwidth), route);
+        rate.log_cap();
+        let bitrate = i32::try_from(rate.bitrate_bps).context("bitrate")?;
+        let mut encoder =
+            OpusEncoder::new(bitrate, duration).map_err(|e| anyhow!("encoder: {e}"))?;
+        let bitrate_bps = u32::try_from(encoder.bitrate().map_err(|e| anyhow!("encoder: {e}"))?)
+            .context("encoder bitrate")?;
+        let mut ticker = tokio::time::interval(Duration::from_millis(u64::from(settings.frame_ms)));
         ticker.set_missed_tick_behavior(MissedTickBehavior::Burst);
         let started = Instant::now();
         let deadline = opts.max_duration.map(|d| started + d);
@@ -208,7 +227,7 @@ impl BotVoice {
         let mut packets = 0u64;
         let mut terminated = false;
         'outer: for pass in 0..passes {
-            let pairs = frames.chunks(2);
+            let pairs = frames.chunks(frames_per_packet);
             let count = pairs.len();
             for (i, pair) in pairs.enumerate() {
                 if deadline.is_some_and(|d| Instant::now() >= d) {
@@ -224,13 +243,19 @@ impl BotVoice {
         if !terminated {
             ticker.tick().await;
             let silence: [Frame; 2] = [[0.0; FRAME_SAMPLES]; 2];
-            self.send_packet(&mut encoder, &silence, true, opts.position)?;
+            self.send_packet(
+                &mut encoder,
+                &silence[..frames_per_packet],
+                true,
+                opts.position,
+            )?;
             packets += 1;
         }
         Ok(PlayReport {
             started,
             finished: Instant::now(),
             packets,
+            bitrate_bps,
         })
     }
 
@@ -243,6 +268,7 @@ impl BotVoice {
     ) -> Result<()> {
         let mut buf = [0u8; MAX_PACKET_BYTES];
         let mut len = None;
+        let frames = u8::try_from(pair.len()).context("frames per packet")?;
         for frame in pair {
             len = encoder
                 .push_frame(frame, &mut buf)
@@ -250,7 +276,7 @@ impl BotVoice {
         }
         let len = len.ok_or_else(|| anyhow!("encoder produced no packet"))?;
         self.transport.send_audio(
-            OutgoingAudio::new(Bytes::copy_from_slice(&buf[..len]), 2, last)
+            OutgoingAudio::new(Bytes::copy_from_slice(&buf[..len]), frames, last)
                 .with_position(position),
         );
         Ok(())

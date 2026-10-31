@@ -74,6 +74,7 @@ pub async fn run(session: &mut Session, command: Command) -> Result<()> {
                 forever: looping,
                 max_duration: seconds.map(secs).transpose()?,
                 position,
+                settings: session.voice_settings,
                 ..Default::default()
             };
             let report = session.voice().await?.play_file(&file, opts).await?;

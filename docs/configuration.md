@@ -84,6 +84,27 @@ bot ignores it. See [peer.md](peer.md).
 | `api_secret_file` | path | none | `MUMBOT_PEER_API_SECRET` | File with the API secret on its first line. The environment variable wins when set. One of both is required; the secret must have at least 32 characters. Keep the file private (`chmod 600`) and out of Git (`*.secret` is git-ignored). Never logged. |
 | `api_fp` | string | none | | SHA-256 of the API's TLS certificate (64 hex digits, colons allowed). Required for `https`: the relay's certificate is self-signed, so it is pinned instead of checked against certificate authorities. |
 
+## `[voice]`: bitrate of voice senders (optional)
+
+Applies to every module that sends voice. Today only the tester build's `play` command sends
+voice; a later module (for example music) reads the same section and may override it in its own
+section.
+
+| Key | Type | Default | Environment | Meaning |
+| --- | --- | --- | --- | --- |
+| `bitrate` | integer | `96000` | `MUMBOT_VOICE_BITRATE` | Opus bitrate in bit/s, 6000 to 510000. The default is Mumcord's own default. Out-of-range values stop the start with an error. |
+| `frame_ms` | integer | `20` | `MUMBOT_VOICE_FRAME_MS` | Packet length in ms: `10` or `20` (the packet sizes of the codec; 40 and 60 ms are not supported). |
+
+**Precedence**, highest first: command line (`--bitrate`, `--frame-ms`), environment variable, the
+module's own section, `[voice]`, the default. Each key is resolved on its own.
+
+**The server limit wins.** The server announces a maximum bandwidth (`ServerConfig`/`ServerSync`;
+Murmur's default is 72000 bit/s). Mumble counts the packet headers against it, so the bot sends at
+most *limit minus header overhead* (about 14800 bit/s for 20 ms packets over UDP, more for 10 ms,
+the TCP tunnel or positional audio). If the configured bitrate is higher, the bot lowers it and
+logs a warning with the configured, effective and server values (`voice bitrate lowered to fit the
+server's bandwidth limit`). It never sends above the limit, and never below 6000 bit/s.
+
 ## Environment variables
 
 | Variable | Used by | Meaning |
@@ -94,6 +115,8 @@ bot ignores it. See [peer.md](peer.md).
 | `MUMCORD_BOT_DATA` | both | Older name of `MUMBOT_DATA`, still honoured when that is unset. |
 | `XDG_DATA_HOME` | both | Base of the default certificate folder (`$XDG_DATA_HOME/mumbot`). |
 | `SERVER_PASSWORD` | both | Connect password of the server. Empty counts as unset. |
+| `MUMBOT_VOICE_BITRATE` | both | Voice bitrate in bit/s; wins over the config, loses to `--bitrate`. See `[voice]`. |
+| `MUMBOT_VOICE_FRAME_MS` | both | Voice packet length (10 or 20 ms); same precedence. |
 | `MUMBOT_PEER_API_SECRET` | peer | API secret of the mumpeer relay; wins over `peer.api_secret_file`. |
 | `SUPERUSER_PASSWORD` | both | SuperUser password for `--superuser` (test bot) or `superuser = true` (webhook). |
 | `MUMBOT_TESTENV_DIR` | both | Folder whose `.env` is the fallback for the two passwords (default `./testenv`). |
