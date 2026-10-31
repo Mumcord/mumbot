@@ -7,7 +7,7 @@ What mumbot protects, what it does not (yet), and what an operator has to take c
 | Area | State |
 | --- | --- |
 | Connection to the Mumble server | Always TLS, with the bot's own client certificate. |
-| Checking the server's certificate | **Not done yet:** the bot accepts any server certificate (see below). |
+| Checking the server's certificate | Only with `server.server_cert_sha256` (required by the peer bot); without it the bot accepts any server certificate (see below). |
 | HTTP API | Plain HTTP, loopback by default; API keys in a header, compared in constant time. |
 | Secrets in files | `bot.toml`, `.env` and certificates are git-ignored; only placeholders in the repository. |
 | Logs | Request metadata only: no keys, no passwords, no message texts. |
@@ -64,13 +64,14 @@ What mumbot protects, what it does not (yet), and what an operator has to take c
 
 - The connection to the server is always TLS; there is no plaintext mode. Voice goes over UDP
   with the server's encryption, or through the TLS tunnel as fallback.
-- **The server's certificate is not checked yet.** The bot core comes from Mumcord's test bot,
-  which only talked to self-signed local test servers, so it accepts any server certificate
-  without pinning or a warning. Someone who can intercept the network path between the bot and
+- **The server's certificate is only checked when you pin it** with `server.server_cert_sha256`
+  (the SHA-256 of the certificate); then any other certificate is refused. The peer bot requires
+  the pin. Without it the bot core, which comes from Mumcord's test bot and only talked to
+  self-signed local test servers, accepts any server certificate without a warning. Someone who can intercept the network path between the bot and
   the server could impersonate the server and read what the bot sends.
-- Until pinning exists, run the bot where that path is trusted: on the same host or private
+- Without a pin, run the bot where that path is trusted: on the same host or private
   network as the server (as in [`examples/webhook-with-server`](../examples/webhook-with-server/)),
-  or over a VPN. Pinning the server certificate on first use and refusing a changed one is
+  or over a VPN. Pinning on first use, so no fingerprint has to be copied by hand, is
   planned ([roadmap](../specs/roadmap.md), "Server certificate check").
 
 ## Passwords

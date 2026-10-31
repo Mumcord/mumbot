@@ -8,10 +8,12 @@ All notable changes to Mumbot are listed here. The format follows
 
 ### Added
 
-- Peer module (off by default, `[peer]` in `bot.toml`): announces a mumpeer relay (addresses
-  and certificate fingerprint) to Mumcord clients over plugin data, hands out short-lived relay
-  tokens for one pair of users, and keeps the relay's allowlist in step with the users on the
-  server. A config with only `[peer]` needs no webhook key. See `docs/peer.md` (#8).
+- Peer bot `mumbot peer --config bot.toml` (Mumcord#62): announces a mumpeer relay to Mumcord
+  clients over plugin data (`mumcord.peer`), fetches pair tokens from the relay's API on request
+  and tells the relay when someone leaves. Needs the new `[peer]` section and a pinned server
+  certificate. See `docs/peer.md` (#8).
+- `server.server_cert_sha256`: pins the Mumble server certificate; any other certificate is
+  refused.
 
 ## [0.1.1] - 2026-10-27
 

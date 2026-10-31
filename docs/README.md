@@ -8,7 +8,7 @@ folder is the reference; the [README](../README.md) has the quick start.
 | Page | What it covers |
 | --- | --- |
 | [Webhook bot](webhook.md) | What the webhook bot does, how to run it, the bot's identity. |
-| [Peer module](peer.md) | Relay discovery for Mumcord clients: announcement, tokens, the relay API. |
+| [Peer bot](peer.md) | Relay discovery for Mumcord clients (`mumbot peer`): announcement, tokens, the relay API. |
 | [Configuration](configuration.md) | Every `bot.toml` key with its default and environment variable. |
 | [CLI](cli.md) | Every command and flag of `mumbot`, plus the load test. |
 | [HTTP API](http-api.md) | `POST /message`, `GET /channels`, `GET /health`, keys, errors, curl examples. |

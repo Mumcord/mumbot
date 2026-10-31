@@ -1,101 +1,126 @@
-# Peer module (relay discovery)
+# Peer bot (relay discovery)
 
-The peer module connects a Mumble server to a [mumpeer](https://github.com/Mumcord/mumpeer)
-relay ([Mumcord#62](https://github.com/Mumcord/mumcord/issues/62)). Two Mumcord clients that
-cannot reach each other directly (both behind strict NAT, or UDP blocked) can then meet on the
-relay instead. The bot only tells clients where the relay is and hands out short-lived tokens; it
-never relays voice or data itself, and the Mumble server stays unmodified.
+The peer bot connects a Mumble server to a [mumpeer](https://github.com/Mumcord/mumpeer) relay
+([Mumcord#62](https://github.com/Mumcord/mumcord/issues/62), spec
+`specs/04-mumpeer-relay-specification.md` in Mumcord). Two Mumcord clients that cannot reach each
+other directly (strict NAT, blocked UDP) can then meet on the relay, and users can hide their IP
+address from the other person. The bot only tells clients where the relay is and fetches
+short-lived tokens for them; it never relays anything itself, and the Mumble server stays
+unmodified.
 
-The module is off by default. It runs inside the webhook bot (`mumbot webhook --config bot.toml`)
-when `bot.toml` has a `[peer]` section. A bot that only runs the peer module needs no
-`[[keys]]`; the HTTP listener then only answers `GET /health`.
+```sh
+mumbot peer --config bot.toml
+```
+
+The bot is off unless you run this command. It reads `[server]` and `[peer]` from `bot.toml`;
+`[http]` and `[[keys]]` belong to the webhook bot and are not needed. When the modular bot
+([#5](https://github.com/Mumcord/mumbot/issues/5)) exists, this becomes the module `peer` with the
+same config section.
+
+## Before you start
+
+- **Register the bot** on the Mumble server (a registered user). Mumcord clients only trust a
+  relay announced by a registered user.
+- **Pin the server certificate.** The peer bot refuses to start without
+  `server.server_cert_sha256` and refuses any server with another certificate, so it never hands
+  out tokens on a server it did not mean to join. Get the value on the server host with
+  `openssl x509 -in <server cert> -noout -fingerprint -sha256`.
+- **The API secret** of your mumpeer relay: at least 32 characters (for example
+  `openssl rand -hex 32`), in a file only the bot can read (`chmod 600`) or in the environment
+  variable `MUMBOT_PEER_API_SECRET`. Never put it into `bot.toml` or Git.
 
 ## How it works
 
 Everything between the bot and the clients travels as plugin data (servers 1.4 and later), which
-official Mumble clients ignore. Each message is JSON of at most 1000 bytes with data id
-`mumcord.peer`.
+official Mumble clients ignore. Each message is compact JSON of at most 1000 bytes with data id
+`mumcord.peer`; any `v` from 1 up is read and unknown fields are ignored.
 
 1. **Announcement.** Every Mumcord client sends a hello (`mumcord.hello`) when it connects and to
-   everyone who joins later, so also to the bot. The bot answers the first hello of each session,
-   to that client only, with the relay addresses and the relay's certificate fingerprint:
+   everyone who joins later. When the hello lists the feature `p2p`, the bot remembers the session
+   and answers it, to that client only:
 
    ```json
-   {"v":1,"t":"relay","udp":["relay.example.org:3478"],"tcp":["relay.example.org:443"],
-    "fp":"<SHA-256 of the relay certificate, 64 lowercase hex digits>","epoch":"<16 hex digits>"}
+   {"v":1,"t":"relay","host":"relay.example.org","udp":443,"tcp":443,"fp":"<64 hex>","state":"up","seq":4}
    ```
 
-   The `epoch` changes when the bot starts and when the relay restarts; a client drops what it
-   knew about the relay on a new epoch. After a relay restart every known Mumcord client gets the
-   new announcement in one message. After a bot restart the clients greet the bot again (it is a
-   new joiner for them) and get it that way.
+   `host`, ports and `fp` (SHA-256 of the relay certificate) come from the relay's status, so the
+   operator sets the public address in one place. `seq` grows with every change. The bot checks
+   the relay every 30 seconds; when the relay restarts, its address, ports or certificate change,
+   or it becomes unreachable (two failed checks in a row, `state: "down"`) or reachable again,
+   every remembered client gets the new announcement in one message. Before the relay answered
+   once there is nothing to announce; waiting clients get it as soon as it answers. After a bot
+   restart the clients greet the bot again (it is a new joiner for them) and get it that way. The
+   bot never sends a Mumcord hello itself.
 
 2. **Token.** A client that wants a relayed connection to one other person asks the bot:
 
    ```json
-   {"v":1,"t":"token_req","id":42,"peer":<session of the other person>}
+   {"v":1,"t":"token-req","rid":"<16 hex>","peer":<session of the other person>}
    ```
 
-   The bot registers a random token (32 bytes, hex) for exactly these two client certificates with
-   the relay, then sends it to both people in one message:
+   The requester is the session the server stamped on the message, never a field of it. Both must
+   be online with a certificate, both must have sent a hello with `p2p`, and they must be
+   different users. The bot then asks the relay for a token for the two certificate hashes and
+   sends it to both in one message:
 
    ```json
-   {"v":1,"t":"token","id":42,"a":<requester session>,"b":<peer session>,"token":"…","exp":<Unix seconds>}
+   {"v":1,"t":"token","rid":"<16 hex>","a":<requester session>,"b":<peer session>,"tok":"<43 base64url>","ttl":120}
    ```
 
-   Or it refuses, to the requester only: `{"v":1,"t":"deny","id":42,"reason":"…"}` with
-   `unknown_peer` (not online, not a Mumcord client, or oneself), `no_cert` (one of the two has no
-   client certificate), `rate_limited` (more than 6 requests per minute from one certificate) or
-   `relay_unavailable` (the relay API did not take the token).
+   Otherwise only the requester gets `{"v":1,"t":"token-err","rid":"…","r":"…"}` with one of:
 
-The requester is always the session the server stamped on the message, never a field of it.
-Unknown message types, newer versions' extra fields and oversized messages are ignored. The bot
-sends nothing to official clients and stays far below the server's plugin data rate limit: one
-message per new Mumcord client, one per token request, one per relay restart.
+   | `r` | Why |
+   | --- | --- |
+   | `denied` | The requester has no certificate or sent no `p2p` hello, or asked for itself, the bot, a peer without certificate or a second session of the same identity. |
+   | `peer-gone` | The peer is not on the server. |
+   | `peer-not-mumcord` | The peer sent no hello with `p2p`. |
+   | `rate-limited` | More than 6 requests from this session in a minute, or the relay asked the bot to slow down. |
+   | `relay-down` | The relay is down or did not answer. |
+   | `relay-full` | The relay has no room for another session. |
 
-**Allowlist.** The certificate hashes (SHA-1, as Mumble shows them) of everyone on the server form
-the relay's allowlist. The bot pushes the full list after joins and leaves (collected for one
-second), again after a relay restart, and retries every 10 seconds when the relay does not answer.
-While the bot reconnects to the Mumble server, the relay keeps the last list.
+   A request without a valid `rid` (16 lowercase hex digits) is ignored.
+
+3. **Leaving.** When a remembered client leaves the server or its certificate changes, the bot
+   tells the relay to drop that certificate hash; the relay closes its sessions.
+
+The bot sends nothing to official clients and stays far below the server's plugin data rate
+limit: one message per new Mumcord client, one per token request, one per relay change.
 
 ## Configuration
 
 ```toml
+[server]
+host = "mumble.example.org"
+name = "RelayBot"
+server_cert_sha256 = "<SHA-256 of the Mumble server certificate>"
+
 [peer]
-udp = ["relay.example.org:3478"]
-tcp = ["relay.example.org:443"]
-fingerprint = "<SHA-256 of the relay certificate>"
-api_url = "http://127.0.0.1:8090"
-secret_file = "/config/relay.secret"
-token_ttl_secs = 120
+api_url = "http://127.0.0.1:7480"
+api_secret_file = "/run/secrets/mumbot_peer_api_secret"
+# api_fp = "<SHA-256 of the relay API certificate>"   # required for https
 ```
 
-Every key is described in [configuration.md](configuration.md#peer-relay-discovery-optional).
-There is no way to announce a relay without the bot.
+Every key is described in [configuration.md](configuration.md#peer-the-peer-bot). There is no way
+to announce a relay without the bot.
 
 ## Relay API
 
-The bot calls the relay's management API with `Authorization: Bearer <secret>` and JSON bodies.
-Every call times out after 5 seconds. Until mumpeer exists, the module is tested against a mock of
-this API.
+The bot calls the relay's API (HTTP/1.1, JSON) with `Authorization: Bearer <secret>`. Every call
+times out after 5 seconds.
 
-| Call | Body | Answer | When |
-| --- | --- | --- | --- |
-| `GET /v1/status` | | `200 {"instance":"…"}` | Every 30 seconds. A new `instance` means the relay restarted. |
-| `PUT /v1/allowlist` | `{"hashes":["<cert hash>", …]}` | any `2xx` | After joins and leaves, and after a relay restart. Replaces the whole list. |
-| `POST /v1/tokens` | `{"token":"…","a":"<cert hash>","b":"<cert hash>","expires_at":<Unix seconds>}` | any `2xx` | For every granted token request, before the token is sent to the clients. |
+| Call | Answer | When |
+| --- | --- | --- |
+| `GET /v1/status` | `200 {"boot_id","host","udp","tcp","fp",…}` | Every 30 seconds; the first check right at start. A new `boot_id` means the relay restarted. |
+| `POST /v1/pairs` with `{"a":"<cert hash>","b":"<cert hash>"}` | `201 {"tok","expires_in"}`, `503` relay full, `429` rate limited | For every accepted token request. |
+| `DELETE /v1/peers/{cert hash}` | `204` | When a remembered client leaves or changes certificate. |
 
-## Security
+Over `https` the relay's self-signed certificate is pinned with `api_fp` instead of being checked
+against certificate authorities; TLS 1.3 only. Plain `http` is meant for a relay on the same host
+or in the same container network; any other host over plain HTTP logs a warning at start, because
+the secret then travels in clear text.
 
-- The API secret is read from `secret_file` at startup. It is never written to the config, the
-  log or the repository. The bot warns when the file is readable by other users.
-- `api_url` over plain HTTP is meant for a relay on the same host. Any other host over plain HTTP
-  logs a warning at startup, because the secret then travels in clear text; use `https`.
-- Tokens are bound to the two certificates, expire after `token_ttl_secs` (2 minutes by default,
-  at most 10) and are only sent to the two people they are for.
-- No names, certificate hashes or tokens are logged; the log shows counts and failures only.
+## Logs
 
-## Health and logs
-
-`RUST_LOG=mumbot=info` shows when the relay API becomes reachable, each allowlist update (with
-the number of users) and relay restarts. Failed API calls are warnings.
+`RUST_LOG=mumbot=info` shows when the bot connected, when the relay became reachable, changed or
+went down, and failed API calls. No user names, sessions, certificate hashes, tokens or the secret
+are logged.

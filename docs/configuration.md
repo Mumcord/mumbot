@@ -1,7 +1,8 @@
 # Configuration reference
 
-The webhook bot reads one TOML file, `bot.toml`, given with `mumbot webhook --config <file>` or
-the `MUMBOT_CONFIG` environment variable. The test bot needs no file; it takes command-line
+The webhook bot and the peer bot read one TOML file, `bot.toml`, given with
+`mumbot webhook --config <file>` or `mumbot peer --config <file>`, or the `MUMBOT_CONFIG`
+environment variable. The test bot needs no file; it takes command-line
 options ([cli.md](cli.md)) and a few environment variables (below).
 
 `bot.toml` holds API keys and passwords: keep it private and never commit it (the repository's
@@ -27,6 +28,7 @@ Rules that apply to the whole file:
 | `channel` | string | none: the bot stays in the root channel | | Channel to join at login: a name (`Lobby`) or a path (`Root/Ops/Alerts`). |
 | `password` | string | none | `SERVER_PASSWORD` | Connect password, if the server has one. Without this key the bot uses `SERVER_PASSWORD`; prefer the environment variable so the file holds fewer secrets. |
 | `data_dir` | path | `MUMBOT_DATA`, else `MUMCORD_BOT_DATA`, else `$XDG_DATA_HOME/mumbot`, else `~/.local/share/mumbot` | `MUMBOT_DATA` | Folder for the client certificate (`certs/<cert_name>/`). In Docker: `/data`, keep it on a volume. |
+| `server_cert_sha256` | string | none: any certificate is accepted | | SHA-256 of the server's certificate, 64 hex digits, colons allowed (`openssl x509 -noout -fingerprint -sha256`). When set, a server with another certificate is refused. Required by the peer bot. |
 | `superuser` | boolean | `false` | `SUPERUSER_PASSWORD` | Log in as `SuperUser` with the password from `SUPERUSER_PASSWORD` instead of a certificate. Only for local test servers. |
 
 When `SERVER_PASSWORD` or `SUPERUSER_PASSWORD` is not in the environment, the bot also looks in
@@ -45,8 +47,7 @@ environment variable.
 ## `[[keys]]`: API keys (at least one)
 
 One block per outside system. A request is only accepted with one of these keys, and only for
-that key's channels. A config with a `[peer]` section may have no key at all; the bot then only
-runs the peer module and answers `GET /health`.
+that key's channels. The peer bot ignores this section.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -65,22 +66,16 @@ is accepted as well.
 | `channel` | name or id | required | The channel the password is for. |
 | `password` | string | required | The channel password. Never logged. |
 
-## `[peer]`: relay discovery (optional)
+## `[peer]`: the peer bot
 
-Off unless the section is present. Announces a mumpeer relay to Mumcord clients and registers
-their certificates and tokens with the relay's API; see [peer.md](peer.md).
+Used only by `mumbot peer`, which needs it together with `server.server_cert_sha256`; the webhook
+bot ignores it. See [peer.md](peer.md).
 
-| Key | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `udp` | list of `"host:port"`, not empty | required | Relay addresses for UDP, which clients try first. |
-| `tcp` | list of `"host:port"` | `[]` | TCP fallback addresses, usually port 443, for networks that block UDP. |
-| `fingerprint` | string | required | SHA-256 of the relay's TLS certificate: 64 hex digits, colons allowed (`openssl x509 -noout -fingerprint -sha256`). Clients only accept a relay with this certificate. |
-| `api_url` | URL | required | Base URL of the relay's management API, for example `"http://127.0.0.1:8090"`. Plain HTTP to another host logs a warning; use `https` there. |
-| `secret_file` | path | required | File with the API secret on its first line. Keep it private (`chmod 600`) and out of Git (`*.secret` is git-ignored). The secret is never logged. |
-| `token_ttl_secs` | integer, 1 to 600 | `120` | How long a token for one pair of users is valid. |
-
-All addresses together must fit one plugin data message (1000 bytes); the config check reports
-it otherwise.
+| Key | Type | Default | Environment | Meaning |
+| --- | --- | --- | --- | --- |
+| `api_url` | URL | required | | Base URL of the mumpeer relay's API, for example `"http://127.0.0.1:7480"`. Plain `http` to another host logs a warning at start; use `https` with `api_fp` there. |
+| `api_secret_file` | path | none | `MUMBOT_PEER_API_SECRET` | File with the API secret on its first line. The environment variable wins when set. One of both is required; the secret must have at least 32 characters. Keep the file private (`chmod 600`) and out of Git (`*.secret` is git-ignored). Never logged. |
+| `api_fp` | string | none | | SHA-256 of the API's TLS certificate (64 hex digits, colons allowed). Required for `https`: the relay's certificate is self-signed, so it is pinned instead of checked against certificate authorities. |
 
 ## Environment variables
 
@@ -91,6 +86,7 @@ it otherwise.
 | `MUMCORD_BOT_DATA` | both | Older name of `MUMBOT_DATA`, still honoured when that is unset. |
 | `XDG_DATA_HOME` | both | Base of the default certificate folder (`$XDG_DATA_HOME/mumbot`). |
 | `SERVER_PASSWORD` | both | Connect password of the server. Empty counts as unset. |
+| `MUMBOT_PEER_API_SECRET` | peer | API secret of the mumpeer relay; wins over `peer.api_secret_file`. |
 | `SUPERUSER_PASSWORD` | both | SuperUser password for `--superuser` (test bot) or `superuser = true` (webhook). |
 | `MUMBOT_TESTENV_DIR` | both | Folder whose `.env` is the fallback for the two passwords (default `./testenv`). |
 | `MUMCORD_TESTENV_DIR` | both | Older name of `MUMBOT_TESTENV_DIR`. |
