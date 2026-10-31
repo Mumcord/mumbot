@@ -7,6 +7,7 @@ folder is the reference; the [README](../README.md) has the quick start.
 
 | Page | What it covers |
 | --- | --- |
+| [Modules and builds](modules.md) | Run one module or several on one connection (`mumbot run`); the main and the tester build. |
 | [Webhook bot](webhook.md) | What the webhook bot does, how to run it, the bot's identity. |
 | [Peer bot](peer.md) | Relay discovery for Mumcord clients (`mumbot peer`): announcement, tokens, the relay API. |
 | [Configuration](configuration.md) | Every `bot.toml` key with its default and environment variable. |
@@ -24,14 +25,14 @@ certificate.
 | --- | --- | --- |
 | [`webhook/`](../examples/webhook/) | The webhook bot against a Mumble server you already run. | Available |
 | [`webhook-with-server/`](../examples/webhook-with-server/) | The webhook bot plus a standard Mumble server, to try it on one machine. | Available |
-| [`ci-test-bot/`](../examples/ci-test-bot/) | The scripted test bot in a CI pipeline against a throwaway server. | Available |
+| [`ci-test-bot/`](../examples/ci-test-bot/) | The scripted test bot (tester image) in a CI pipeline against a throwaway server. | Available |
 | [`peer-with-relay/`](../examples/peer-with-relay/) | The peer bot with a mumpeer relay and a standard Mumble server. | Placeholder relay image until mumpeer is released |
 | `music/` | The music bot. | Coming with [#3](https://github.com/Mumcord/mumbot/issues/3) |
 | `history/` | The history bot with a persistent volume for its database. | Coming with [#2](https://github.com/Mumcord/mumbot/issues/2) |
-| `multi-module/` | Several modules in one setup. | Coming with [#5](https://github.com/Mumcord/mumbot/issues/5) |
 
-All examples use the pinned image `ghcr.io/mumcord/mumbot:0.1.0`. When you upgrade, change the
-tag in `docker-compose.yml` and read the [changelog](../CHANGELOG.md) first.
+The examples use the pinned image `ghcr.io/mumcord/mumbot:0.1.0`; `ci-test-bot` uses the tester
+image `ghcr.io/mumcord/mumbot-tester` ([modules.md](modules.md#the-two-builds)). When you upgrade,
+change the tag in `docker-compose.yml` and read the [changelog](../CHANGELOG.md) first.
 
 ### How the examples are tested
 

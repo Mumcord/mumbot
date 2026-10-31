@@ -3,7 +3,7 @@
 //!
 //! Only for the local load-test server (`testenv/scale/up.sh`, port 44850). Run with:
 //!
-//!     cargo run --release --example loadtest -- --users 1000
+//!     cargo run --release --features tester --example loadtest -- --users 1000
 //!
 //! Churn and talking are toggled at runtime by creating/removing the files named by `--churn-file`
 //! and `--talk-file`, so one connected crowd serves both the steady-state and the churn phase.
