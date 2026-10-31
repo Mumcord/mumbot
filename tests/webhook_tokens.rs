@@ -45,6 +45,7 @@ fn config(
     with_password: bool,
 ) -> Arc<WebhookConfig> {
     Arc::new(WebhookConfig {
+        modules: Default::default(),
         server: ServerConfig {
             host: env::HOST.to_owned(),
             port: env::test_port(),

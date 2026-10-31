@@ -10,10 +10,10 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use mumbot::peer::{self, PeerConfig};
+use mumbot::peer::PeerConfig;
 use mumbot::protocol::Event;
-use mumbot::webhook::{ServerConfig, WebhookConfig};
-use mumbot::{Bot, BotConfig, UserCheck, env};
+use mumbot::webhook::{ApiKey, ChannelRef, HttpConfig, ModulesConfig, ServerConfig, WebhookConfig};
+use mumbot::{Bot, BotConfig, MessageCheck, Module, UserCheck, env, modules};
 use rustls::pki_types::CertificateDer;
 use rustls::pki_types::pem::PemObject;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -141,6 +141,9 @@ fn peer_config(dir: &Path, name: &str, relay_url: &str, pin: String) -> Arc<Webh
     let secret_file = dir.join("relay.secret");
     std::fs::write(&secret_file, format!("{SECRET}\n")).expect("secret");
     Arc::new(WebhookConfig {
+        modules: ModulesConfig {
+            enabled: vec![Module::Peer],
+        },
         server: ServerConfig {
             host: env::HOST.to_owned(),
             port: env::test_port(),
@@ -227,7 +230,7 @@ async fn clients_learn_the_relay_and_a_pair_gets_a_token() {
         .await
         .expect("bob");
     let (mut alice_events, mut bob_events) = (alice.subscribe(), bob.subscribe());
-    let running = tokio::spawn(peer::run_bot(peer_config(
+    let running = tokio::spawn(modules::run(peer_config(
         dir.path(),
         &bot_name,
         &relay_url,
@@ -295,11 +298,101 @@ async fn a_wrong_server_pin_refuses_the_server() {
     let dir = tempfile::tempdir().expect("tempdir");
     let (relay_url, _) = mock_relay().await;
     let config = peer_config(dir.path(), &unique("peerbot"), &relay_url, "00".repeat(32));
-    let result = tokio::time::timeout(Duration::from_secs(15), peer::run_bot(config))
+    let result = tokio::time::timeout(Duration::from_secs(15), modules::run(config))
         .await
         .expect("fails fast");
     assert!(
         result.is_err(),
         "a server with another certificate is refused"
     );
+}
+
+/// AC-3.1 of spec 03: the webhook and the peer module share one bot user.
+#[tokio::test]
+#[ignore = "needs testenv and MUMBOT_LIVE=1"]
+async fn webhook_and_peer_modules_share_one_connection() {
+    if !live() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (relay_url, _) = mock_relay().await;
+    let (alice_name, bot_name) = (unique("alice"), unique("modbot"));
+    let alice = Bot::connect(client(dir.path(), &alice_name))
+        .await
+        .expect("alice");
+    let mut alice_events = alice.subscribe();
+    let port = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("free port")
+        .local_addr()
+        .expect("addr")
+        .port();
+    let key = "a-long-random-key-for-the-modules-test";
+    let mut config =
+        Arc::unwrap_or_clone(peer_config(dir.path(), &bot_name, &relay_url, server_pin()));
+    config.modules.enabled = vec![Module::Webhook, Module::Peer];
+    config.http = HttpConfig {
+        listen: format!("127.0.0.1:{port}"),
+        ..HttpConfig::default()
+    };
+    config.keys = vec![ApiKey {
+        key: key.to_owned(),
+        label: "modules".to_owned(),
+        channels: vec![ChannelRef::Id(0)],
+    }];
+    let running = tokio::spawn(modules::run(Arc::new(config)));
+
+    alice
+        .wait_user(&bot_name, &UserCheck::default())
+        .await
+        .expect("the bot logs in");
+    let bot = session_of(&alice, &bot_name);
+    let hello = br#"{"app":"mumcord","v":1,"features":["p2p"]}"#.to_vec();
+    alice
+        .handle()
+        .send_plugin_data(&[bot], "mumcord.hello", hello)
+        .expect("hello");
+    assert_eq!(
+        next_peer_message(&mut alice_events, bot).await["t"],
+        "relay",
+        "the peer module announces the relay"
+    );
+
+    let body = r#"{"channel": 0, "message": "from the modules test"}"#;
+    let request = format!(
+        "POST /message HTTP/1.1\r\nHost: 127.0.0.1\r\nX-API-Key: {key}\r\n\
+         Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let mut socket = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("webhook listener");
+    socket.write_all(request.as_bytes()).await.expect("send");
+    let mut response = String::new();
+    socket
+        .read_to_string(&mut response)
+        .await
+        .expect("response");
+    assert!(response.contains("\"delivered\":true"), "{response}");
+    let message = alice
+        .wait_message(&MessageCheck {
+            contains: Some("from the modules test".to_owned()),
+            ..MessageCheck::default()
+        })
+        .await
+        .expect("the webhook message arrives");
+    assert_eq!(message.actor, Some(bot), "sent by the same bot user");
+    assert_eq!(
+        alice
+            .state()
+            .users
+            .values()
+            .filter(|u| u.name == bot_name)
+            .count(),
+        1,
+        "one bot user for both modules"
+    );
+
+    running.abort();
+    alice.disconnect().await.expect("alice leaves");
 }

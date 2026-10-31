@@ -9,18 +9,17 @@
 //!    address, ports, fingerprint, reachable or not) all of them get it again in one message.
 //! 2. A client that asks for a token for one peer gets one from the relay's API, sent to both.
 //!
-//! When someone leaves or changes certificate, the relay drops their hash. Runs as
-//! `mumbot peer --config bot.toml` with a `[peer]` section.
+//! When someone leaves or changes certificate, the relay drops their hash. Runs as a module
+//! (`mumbot peer --config bot.toml`, or `mumbot run` with other modules) with a `[peer]` section.
 
 pub mod config;
 pub mod relay;
 pub mod wire;
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use mumcord_protocol::Event;
 use tokio::sync::broadcast;
 use tokio::time::Instant;
@@ -28,7 +27,6 @@ use tokio::time::Instant;
 pub use config::{PeerConfig, Secret};
 pub use relay::{HttpRelay, Pair, PairError, RelayApi, Status};
 
-use crate::webhook::{BotApi, WebhookConfig};
 use wire::{Relay, State, Token, TokenError, TokenRequest};
 
 /// How often the relay's status is polled (FR-4.25).
@@ -343,31 +341,6 @@ pub async fn run<R: RelayApi, L: Link>(
             },
             _ = status.tick() => peer.check_status().await,
         }
-    }
-}
-
-/// `mumbot peer`: logs in, keeps the connection up and runs the module (FR-4.22).
-pub async fn run_bot(config: Arc<WebhookConfig>) -> Result<()> {
-    let Some(peer) = &config.peer else {
-        bail!("the config has no [peer] section");
-    };
-    let url = peer.url()?;
-    if !url.is_local_or_tls() {
-        tracing::warn!(
-            api_url = %peer.api_url,
-            "peer: relay API over plain HTTP to another host: the API secret travels in clear \
-             text, use https with api_fp"
-        );
-    }
-    let relay = HttpRelay::new(peer, peer.load_secret()?)?;
-    let api = Arc::new(BotApi::new(Arc::clone(&config)));
-    // Subscribed before the login: Mumcord clients greet a joining bot right away.
-    let events = api.subscribe();
-    api.connect().await?;
-    tracing::info!(name = %config.server.name, "peer bot connected");
-    tokio::select! {
-        result = run(relay, Arc::clone(&api), events) => result,
-        result = crate::webhook::supervise(Arc::clone(&api)) => result,
     }
 }
 

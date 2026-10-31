@@ -10,15 +10,21 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
+use crate::Module;
 use crate::peer::PeerConfig;
 use crate::webhook::{DELIVERY_TIMEOUT, RATE_LIMIT_PER_MINUTE};
 
 /// Default listener: loopback only, must be changed explicitly to serve a LAN.
 pub const DEFAULT_LISTEN: &str = "127.0.0.1:8080";
 
+/// The bot's config file: the shared server settings plus one section per module. Named after
+/// the webhook bot it started with.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WebhookConfig {
+    /// Which modules `mumbot run` starts; a command line choice replaces the list.
+    #[serde(default)]
+    pub modules: ModulesConfig,
     #[serde(default)]
     pub server: ServerConfig,
     #[serde(default)]
@@ -30,9 +36,16 @@ pub struct WebhookConfig {
     /// an error, so a typo is reported instead of silently ignored.
     #[serde(default, alias = "token")]
     pub tokens: Vec<ChannelToken>,
-    /// The peer bot (`mumbot peer`); the webhook bot ignores it.
+    /// The peer module; ignored unless it runs.
     #[serde(default)]
     pub peer: Option<PeerConfig>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModulesConfig {
+    #[serde(default)]
+    pub enabled: Vec<Module>,
 }
 
 #[derive(Clone, PartialEq, Eq, Deserialize)]
@@ -123,18 +136,14 @@ impl std::fmt::Debug for ApiKey {
 }
 
 impl WebhookConfig {
-    /// Reads and validates a TOML config file for the webhook bot.
-    pub fn load(path: &Path) -> Result<Self> {
-        let config = Self::read(path)?;
-        config.validate()?;
-        Ok(config)
-    }
-
-    /// Reads and validates a TOML config file for the peer bot: `[peer]` and a pinned server
-    /// certificate are required, API keys are not (mumcord spec 04, FR-4.22 and FR-4.28).
-    pub fn load_peer(path: &Path) -> Result<Self> {
-        let config = Self::read(path)?;
-        config.validate_peer()?;
+    /// Reads a TOML config file, replaces its module list with `chosen` unless that is empty,
+    /// and validates it for the modules that will run.
+    pub fn load(path: &Path, chosen: &[Module]) -> Result<Self> {
+        let mut config = Self::read(path)?;
+        if !chosen.is_empty() {
+            config.modules.enabled = chosen.to_vec();
+        }
+        config.validate_modules()?;
         Ok(config)
     }
 
@@ -144,6 +153,42 @@ impl WebhookConfig {
         toml::from_str(&text).with_context(|| format!("invalid config {}", path.display()))
     }
 
+    /// Validates only the sections of the enabled modules; a repeated module counts once.
+    fn validate_modules(&mut self) -> Result<()> {
+        let mut seen = Vec::new();
+        self.modules.enabled.retain(|module| {
+            let first = !seen.contains(module);
+            seen.push(*module);
+            first
+        });
+        let enabled = &self.modules.enabled;
+        if enabled.is_empty() {
+            bail!(
+                "no module to run: choose them with --modules (or MUMBOT_MODULES) or in the \
+                 config's [modules] enabled list"
+            );
+        }
+        if enabled.contains(&Module::Webhook) {
+            self.validate()?;
+            // Pinning is the peer module's requirement (mumcord spec 04, FR-4.28); for the
+            // webhook alone it is a later decision (roadmap, "Server certificate check"), so a
+            // pin here would only look like protection. With the peer module it guards the
+            // shared connection.
+            if !enabled.contains(&Module::Peer) && self.server.server_cert_sha256.is_some() {
+                bail!(
+                    "server.server_cert_sha256 is only used with the peer module; remove it for \
+                     the webhook bot"
+                );
+            }
+        }
+        if enabled.contains(&Module::Peer) {
+            self.validate_peer()?;
+        }
+        Ok(())
+    }
+
+    /// `[peer]` and a pinned server certificate are required, API keys are not (mumcord spec
+    /// 04, FR-4.22 and FR-4.28).
     fn validate_peer(&self) -> Result<()> {
         let Some(peer) = &self.peer else {
             bail!("config has no [peer] section");
@@ -173,14 +218,6 @@ impl WebhookConfig {
     fn validate(&self) -> Result<()> {
         if self.keys.is_empty() {
             bail!("config has no API key");
-        }
-        // Pinning is the peer bot's requirement (mumcord spec 04, FR-4.28); for the webhook bot
-        // it is a later decision (roadmap, "Server certificate check"), so a pin here would only
-        // look like protection.
-        if self.server.server_cert_sha256.is_some() {
-            bail!(
-                "server.server_cert_sha256 is only used by `mumbot peer`; remove it for the webhook bot"
-            );
         }
         for entry in &self.keys {
             if entry.key.is_empty() {
@@ -231,7 +268,7 @@ impl WebhookConfig {
         });
         bot.data_dir = self.server.data_dir.clone();
         bot.superuser = self.server.superuser;
-        // `load` and `load_peer` validate the pin; an invalid one never matches a certificate.
+        // `load` validates the pin; an invalid one never matches a certificate.
         bot.server_cert_sha256 = self.server.server_cert_sha256.as_ref().map(|value| {
             self.server_cert_pin()
                 .ok()
@@ -424,7 +461,6 @@ api_secret_file = "relay.secret"
         let pin = format!("{}AB", "AB:".repeat(31));
         let config: WebhookConfig = toml::from_str(&text.replace("PIN", &pin)).expect("config");
         config.validate_peer().expect("no key needed");
-        assert!(config.validate().is_err(), "the webhook bot does not pin");
         assert_eq!(
             config.bot_config().server_cert_sha256,
             Some("ab".repeat(32)),
@@ -437,6 +473,79 @@ api_secret_file = "relay.secret"
         assert!(config.validate_peer().is_err(), "the pin is required");
         let config: WebhookConfig = toml::from_str("").expect("config");
         assert!(config.validate_peer().is_err(), "[peer] is required");
+    }
+
+    const BOTH: &str = r#"
+[modules]
+enabled = ["webhook", "peer", "webhook"]
+
+[server]
+server_cert_sha256 = "PIN"
+
+[peer]
+api_url = "http://127.0.0.1:7480"
+api_secret_file = "relay.secret"
+
+[[keys]]
+key = "a-long-random-key-1234567890"
+label = "ci"
+channels = ["Lobby"]
+"#;
+
+    fn both() -> WebhookConfig {
+        toml::from_str(&BOTH.replace("PIN", &"ab".repeat(32))).expect("config")
+    }
+
+    #[test]
+    fn only_the_enabled_modules_are_validated() {
+        let mut config = both();
+        config.validate_modules().expect("webhook and peer");
+        assert_eq!(
+            config.modules.enabled,
+            [Module::Webhook, Module::Peer],
+            "a repeated module counts once"
+        );
+
+        let mut config = both();
+        config.modules.enabled = vec![Module::Webhook];
+        assert!(
+            config.validate_modules().is_err(),
+            "the webhook alone does not pin"
+        );
+
+        let mut config = both();
+        config.keys.clear();
+        config.modules.enabled = vec![Module::Peer];
+        config
+            .validate_modules()
+            .expect("the peer module needs no key");
+
+        let mut config = both();
+        config.modules.enabled.clear();
+        let error = config.validate_modules().expect_err("nothing to run");
+        assert!(error.to_string().contains("--modules"), "{error}");
+
+        let mut config: WebhookConfig = toml::from_str(SAMPLE).expect("toml");
+        config.modules.enabled = vec![Module::Webhook];
+        config
+            .validate_modules()
+            .expect("a webhook config without [modules] still works");
+
+        assert!(
+            toml::from_str::<WebhookConfig>("[modules]\nenabled = [\"music\"]").is_err(),
+            "an unknown module is reported"
+        );
+    }
+
+    #[test]
+    fn a_command_line_choice_replaces_the_module_list() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("bot.toml");
+        std::fs::write(&path, BOTH.replace("PIN", &"ab".repeat(32))).expect("write");
+        let config = WebhookConfig::load(&path, &[Module::Peer]).expect("load");
+        assert_eq!(config.modules.enabled, [Module::Peer]);
+        let config = WebhookConfig::load(&path, &[]).expect("load");
+        assert_eq!(config.modules.enabled, [Module::Webhook, Module::Peer]);
     }
 
     #[test]

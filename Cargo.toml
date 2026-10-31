@@ -1,6 +1,6 @@
 [package]
 name = "mumbot"
-description = "Headless Mumble bots for standard Mumble servers: a webhook bot and a scripted test bot"
+description = "Headless Mumble bots for standard Mumble servers: webhook and peer modules, plus a scripted test bot in the tester build"
 version = "0.1.1"
 edition = "2024"
 rust-version = "1.90"
@@ -13,9 +13,9 @@ publish = false
 # live tests. mumcord-codec (Opus without device I/O, so static builds need no ALSA) gives the
 # test bot's voice the same codec settings as the client.
 mumcord-protocol = "0.4"
-mumcord-codec = "0.4"
-bytes = "1"
-hound = "3.5"
+mumcord-codec = { version = "0.4", optional = true }
+bytes = { version = "1", optional = true }
+hound = { version = "3.5", optional = true }
 tokio = { version = "1.54", features = ["full"] }
 anyhow = "1"
 tracing = "0.1"
@@ -31,8 +31,42 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 ring = "0.17"
 
+[features]
+# The scripted test bot (test subcommands, voice, samples, checks, load generator). Off by
+# default, so the main build carries no test code; the `mumbot-tester` release enables it.
+tester = ["dep:mumcord-codec", "dep:hound", "dep:bytes"]
+
 [dev-dependencies]
+bytes = "1"
 tempfile = "3"
+
+[[example]]
+name = "loadtest"
+required-features = ["tester"]
+
+[[test]]
+name = "cli"
+required-features = ["tester"]
+
+[[test]]
+name = "live"
+required-features = ["tester"]
+
+[[test]]
+name = "voice_live"
+required-features = ["tester"]
+
+[[test]]
+name = "webhook_live"
+required-features = ["tester"]
+
+[[test]]
+name = "webhook_tokens"
+required-features = ["tester"]
+
+[[test]]
+name = "peer_live"
+required-features = ["tester"]
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "warn"

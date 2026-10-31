@@ -13,7 +13,7 @@ use crate::checks::resolve_channel;
 use crate::peer::{Link, Users};
 use crate::webhook::MAX_MESSAGE_CHARS;
 use crate::webhook::config::{ApiKey, ChannelRef, WebhookConfig};
-use crate::webhook::http::{Api, DeliveryError, serve};
+use crate::webhook::http::{Api, DeliveryError};
 
 /// Wait between reconnect attempts (FR-1.1).
 const RECONNECT_DELAY: Duration = Duration::from_secs(2);
@@ -224,30 +224,6 @@ impl Link for Arc<BotApi> {
         bot.handle()
             .send_plugin_data(receivers, crate::peer::wire::DATA_ID, data)?;
         Ok(())
-    }
-}
-
-/// Runs the bot and the listener until the process is stopped (Q1.2, Q3.8).
-pub async fn run(config: Arc<WebhookConfig>) -> Result<()> {
-    if !config.listens_locally() {
-        tracing::warn!(
-            listen = %config.http.listen,
-            "listening outside loopback over plain HTTP: the API key travels in clear text, \
-             put a TLS proxy in front"
-        );
-    }
-    let listener = tokio::net::TcpListener::bind(config.listen_addr()?).await?;
-    tracing::info!(
-        listen = %listener.local_addr()?,
-        keys = config.keys.len(),
-        name = %config.server.name,
-        "webhook bot listening"
-    );
-    let api = Arc::new(BotApi::new(Arc::clone(&config)));
-    api.connect().await?;
-    tokio::select! {
-        result = serve(listener, config, Arc::clone(&api)) => result,
-        result = supervise(Arc::clone(&api)) => result,
     }
 }
 
