@@ -218,7 +218,7 @@ jobs:
           cat > ../notes.md <<EOF
           ## Downloads
 
-          Two variants: **mumbot** runs the production modules (webhook, peer); **mumbot-tester** adds the scripted test bot (checks, voice, samples) for testing Mumble servers and clients in CI.
+          Two variants: **mumbot** runs the production modules (webhook, peer, history, music); **mumbot-tester** adds the scripted test bot (checks, voice, samples, load test) for testing Mumble servers and clients in CI.
 
           - **Linux** (static, any distribution): \`mumbot-$VERSION-linux-x86_64.tar.gz\` or \`mumbot-$VERSION-linux-aarch64.tar.gz\`
           - **Windows**: \`mumbot-$VERSION-windows-x86_64.zip\`
