@@ -1,7 +1,8 @@
 # Configuration reference
 
 The bot's modules read one TOML file, `bot.toml`, given with
-`mumbot webhook --config <file>`, `mumbot peer --config <file>` or `mumbot run --config <file>`,
+`mumbot webhook --config <file>`, `mumbot peer --config <file>`, `mumbot music --config <file>`
+or `mumbot run --config <file>`,
 or the `MUMBOT_CONFIG` environment variable. Modules that run together share the `[server]`
 section and its connection ([modules.md](modules.md)). The test bot needs no file; it takes command-line
 options ([cli.md](cli.md)) and a few environment variables (below).
@@ -9,7 +10,8 @@ options ([cli.md](cli.md)) and a few environment variables (below).
 `bot.toml` holds API keys and passwords: keep it private and never commit it (the repository's
 `.gitignore` excludes every `bot.toml`). Commented starting points:
 [`examples/bot.example.toml`](../examples/bot.example.toml) for a binary,
-[`examples/webhook/bot.example.toml`](../examples/webhook/bot.example.toml) for Docker.
+[`examples/webhook/bot.example.toml`](../examples/webhook/bot.example.toml) and
+[`examples/music/bot.example.toml`](../examples/music/bot.example.toml) for Docker.
 
 Rules that apply to the whole file:
 
@@ -22,7 +24,7 @@ Rules that apply to the whole file:
 
 | Key | Type | Default | Env | Meaning |
 | --- | --- | --- | --- | --- |
-| `enabled` | list of `"webhook"`, `"peer"` | `[]` | `MUMBOT_MODULES` (comma-separated, via `--modules`) | Modules for `mumbot run`. `--modules`, `MUMBOT_MODULES`, `mumbot webhook` and `mumbot peer` replace it. Only the sections of the chosen modules are checked. |
+| `enabled` | list of `"webhook"`, `"peer"`, `"music"` | `[]` | `MUMBOT_MODULES` (comma-separated, via `--modules`) | Modules for `mumbot run`. `--modules`, `MUMBOT_MODULES`, `mumbot webhook`, `mumbot peer` and `mumbot music` replace it. Only the sections of the chosen modules are checked. |
 
 ## `[server]`: the Mumble server and the bot's identity
 
@@ -84,11 +86,41 @@ bot ignores it. See [peer.md](peer.md).
 | `api_secret_file` | path | none | `MUMBOT_PEER_API_SECRET` | File with the API secret on its first line. The environment variable wins when set. One of both is required; the secret must have at least 32 characters. Keep the file private (`chmod 600`) and out of Git (`*.secret` is git-ignored). Never logged. |
 | `api_fp` | string | none | | SHA-256 of the API's TLS certificate (64 hex digits, colons allowed). Required for `https`: the relay's certificate is self-signed, so it is pinned instead of checked against certificate authorities. |
 
+## `[music]`: the music bot
+
+Used only when the music module runs; it then needs at least one `[[music.keys]]` entry and a
+`media_dir` or enabled URLs. See [music.md](music.md).
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `listen` | `host:port` | `"127.0.0.1:8081"` | The music API's own listener. Anything but loopback logs a plain-HTTP warning at start. |
+| `channel` | name or id | none | Where a track plays when the request names no channel; without it the bot's current channel. |
+| `media_dir` | path | none | Folder that `{"file": …}` plays from; nothing outside it (also not through symlinks). |
+| `return_home` | bool | `true` | Move back to `server.channel` when the queue is empty. |
+| `volume` | 0–100 | `60` | Start volume in percent. |
+| `max_queue` | integer | `10` | Waiting tracks; one more answers 409. |
+| `max_track_mb` | integer | `20` | Size cap of a file, upload or download (413). |
+| `max_track_secs` | integer | `900` | Length cap (422; a track without a known length is cut). |
+| `rate_limit_per_minute` | integer | `30` | Requests per key (429). |
+| `bitrate`, `frame_ms` | integer | from `[voice]` | The music's voice settings, above `[voice]` (below `--bitrate` and the environment). |
+
+`[music.urls]`: MP3s from the web.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `enabled` | bool | `false` | URL sources are refused (403) unless this is `true`. |
+| `allow_hosts` | list of strings | `[]` | Host names a URL may point to; `"*.example.com"` allows every subdomain. Required when enabled. |
+| `allow_private` | bool | `false` | Allow hosts that resolve to private, loopback or link-local addresses. |
+| `timeout_secs` | integer | `20` | Time for the whole download (502 after it). |
+
+`[[music.keys]]`: one entry per caller, the same fields as [`[[keys]]`](#keys-api-keys-at-least-one)
+(`key`, `label`, `channels`). The channels are the ones the key may play into. Music keys and
+webhook keys are separate lists.
+
 ## `[voice]`: bitrate of voice senders (optional)
 
-Applies to every module that sends voice. Today only the tester build's `play` command sends
-voice; a later module (for example music) reads the same section and may override it in its own
-section.
+Applies to every module that sends voice: the music module (which may override it in `[music]`)
+and the tester build's `play` command.
 
 | Key | Type | Default | Environment | Meaning |
 | --- | --- | --- | --- | --- |
@@ -110,7 +142,7 @@ server's bandwidth limit`). It never sends above the limit, and never below 6000
 | Variable | Used by | Meaning |
 | --- | --- | --- |
 | `MUMBOT_CONFIG` | modules | Config file path when `--config` is not given. The Docker image sets `/config/bot.toml`. |
-| `MUMBOT_MODULES` | modules | Modules for `mumbot run`, comma-separated (`webhook,peer`); replaces `[modules] enabled`. |
+| `MUMBOT_MODULES` | modules | Modules for `mumbot run`, comma-separated (`webhook,peer,music`); replaces `[modules] enabled`. |
 | `MUMBOT_DATA` | both | Certificate folder. The Docker image sets `/data`. |
 | `MUMCORD_BOT_DATA` | both | Older name of `MUMBOT_DATA`, still honoured when that is unset. |
 | `XDG_DATA_HOME` | both | Base of the default certificate folder (`$XDG_DATA_HOME/mumbot`). |

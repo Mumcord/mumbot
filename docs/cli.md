@@ -22,7 +22,7 @@ mumbot [OPTIONS] <COMMAND>
 
 ## Global options
 
-Given before the subcommand. `webhook`, `peer` and `run` ignore the connection options (their config
+Given before the subcommand. `webhook`, `peer`, `music` and `run` ignore the connection options (their config
 file holds the connection); only `--bitrate` and `--frame-ms` apply to them.
 
 | Option | Default | Meaning |
@@ -33,7 +33,7 @@ file holds the connection); only `--bitrate` and `--frame-ms` apply to them.
 | `--cert <CERT>` | the `--name` | Persistent certificate name; reuse it to keep the identity. |
 | `--superuser` | off | Log in as `SuperUser`. Password: `SUPERUSER_PASSWORD` from the environment, else from `.env` in `MUMBOT_TESTENV_DIR`, `MUMCORD_TESTENV_DIR` or `./testenv`. |
 | `--timeout <TIMEOUT>` | `10` | Seconds for the login and for each wait. |
-| `--bitrate <BPS>` | `96000` | Opus bitrate of voice the bot sends (`play`), 6000 to 510000; also `MUMBOT_VOICE_BITRATE`. The server's bandwidth limit can lower it (a warning is logged). `webhook`, `peer` and `run` take it too and use it above their `[voice]` section. |
+| `--bitrate <BPS>` | `96000` | Opus bitrate of voice the bot sends (`play`), 6000 to 510000; also `MUMBOT_VOICE_BITRATE`. The server's bandwidth limit can lower it (a warning is logged). `webhook`, `peer`, `music` and `run` take it too and use it above their `[music]` and `[voice]` sections. |
 | `--frame-ms <MS>` | `20` | Voice packet length, `10` or `20`; also `MUMBOT_VOICE_FRAME_MS`. |
 | `--hold <HOLD>` | `0` | Seconds to stay connected after the command(s) before exiting. Not after a failed command. |
 | `-h`, `--help` | | Print help. |
@@ -64,12 +64,21 @@ Runs until stopped, reconnects after a dropped link and exits non-zero only when
 API secret is invalid or the very first login fails (also when the server certificate does not
 match the pin).
 
+## `music`
+
+| Usage | Option | Meaning |
+| --- | --- | --- |
+| `mumbot music --config <CONFIG>` | `--config <CONFIG>` (env `MUMBOT_CONFIG`) | TOML config file with the server settings and the `[music]` section ([configuration.md](configuration.md#music-the-music-bot)). |
+
+Runs the music API ([music.md](music.md)) until stopped, reconnects after a dropped link and exits
+non-zero only when the config is invalid, the listener cannot bind or the very first login fails.
+
 ## `run`
 
 | Usage | Option | Meaning |
 | --- | --- | --- |
 | `mumbot run --config <CONFIG> [--modules <MODULES>]` | `--config <CONFIG>` (env `MUMBOT_CONFIG`) | TOML config file with the server settings and the sections of the chosen modules. |
-| | `--modules <MODULES>` (env `MUMBOT_MODULES`) | Comma-separated modules (`webhook`, `peer`); replaces `[modules] enabled` of the config. |
+| | `--modules <MODULES>` (env `MUMBOT_MODULES`) | Comma-separated modules (`webhook`, `peer`, `music`); replaces `[modules] enabled` of the config. |
 
 Logs in once and runs every chosen module on that connection. Runs until stopped, reconnects
 after a dropped link and exits non-zero when no module is chosen, the config is invalid for the

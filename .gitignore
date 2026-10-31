@@ -24,3 +24,6 @@ bot.toml
 
 # Agent worktrees
 .claude/worktrees/
+
+# MP3s copied into the music example
+examples/music/media/*.mp3

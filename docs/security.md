@@ -42,6 +42,23 @@ What mumbot protects, what it does not (yet), and what an operator has to take c
 - `GET /health` needs no key and reveals only the connection state, the uptime and the
   configured host name.
 
+## Music sources
+
+The music module ([music.md](music.md)) has its own listener (`127.0.0.1:8081` by default, the same
+rules as above) and its own `[[music.keys]]`, so a webhook key cannot play audio.
+
+- **Files** come only from `media_dir`: absolute paths, `..` and symlinks that lead outside are
+  refused (403). Mount the folder read-only.
+- **URLs** are refused unless `[music.urls] enabled = true`, and then only for hosts in
+  `allow_hosts`. A host that resolves to a private, loopback, link-local, carrier-grade NAT,
+  multicast or reserved address is refused unless `allow_private = true`; the bot connects to
+  the address it checked. Redirects are not followed; HTTPS uses Mozilla's root store.
+- **Limits**: size (`max_track_mb`, checked before more is read), length (`max_track_secs`), a
+  download timeout, a 60-second request timeout, the queue length and a rate limit per key. The
+  key is checked before an upload is read.
+- **Logs** show the key label, endpoint, status, channel and the kind of source (with a URL's host
+  only); never the key, file contents or full URLs.
+
 ## Message content
 
 - Text from callers is escaped before it reaches the chat; only a small Markdown subset becomes
