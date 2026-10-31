@@ -1,0 +1,17 @@
+# Copy to bot.toml (git-ignored) and set the server pin. Placeholder only.
+# Every key: docs/configuration.md and docs/peer.md.
+
+[server]
+# The server service of docker-compose.yml.
+host = "mumble-server"
+port = 64738
+# The user name people see; register it once (README step 5), Mumcord only trusts a registered
+# announcer.
+name = "RelayBot"
+# SHA-256 of the Mumble server's certificate; the peer bot refuses to start without it.
+server_cert_sha256 = "REPLACE-WITH-THE-SERVER-CERTIFICATE-SHA256"
+
+[peer]
+# The relay API on loopback: the bot shares the relay's network namespace.
+api_url = "http://127.0.0.1:7480"
+# The secret comes from MUMBOT_PEER_API_SECRET (PEER_API_SECRET in .env).

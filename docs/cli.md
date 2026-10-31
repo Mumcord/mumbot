@@ -8,6 +8,7 @@ mumbot [OPTIONS] <COMMAND>
 ```
 
 - `mumbot webhook` runs the long-lived webhook bot ([webhook.md](webhook.md)).
+- `mumbot peer` runs the long-lived peer bot that announces a mumpeer relay ([peer.md](peer.md)).
 - Every other subcommand drives the scripted **test bot**: it connects, runs the subcommand (or a
   whole script), stays connected for `--hold` seconds and exits. Before it disconnects it waits
   until the server has received everything it sent, so a `say` or `pm` is never lost.
@@ -18,7 +19,7 @@ mumbot [OPTIONS] <COMMAND>
 
 ## Global options
 
-Given before the subcommand. `webhook` ignores them; its config file holds the connection.
+Given before the subcommand. `webhook` and `peer` ignore them; its config file holds the connection.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
@@ -46,6 +47,16 @@ Given before the subcommand. `webhook` ignores them; its config file holds the c
 
 Runs until stopped, reconnects after a dropped link and exits non-zero only when the config is
 invalid, the listener cannot bind or the very first login fails.
+
+## `peer`
+
+| Usage | Option | Meaning |
+| --- | --- | --- |
+| `mumbot peer --config <CONFIG>` | `--config <CONFIG>` (env `MUMBOT_CONFIG`) | TOML config file with the server settings, `server.server_cert_sha256` and the `[peer]` section ([configuration.md](configuration.md#peer-the-peer-bot)). |
+
+Runs until stopped, reconnects after a dropped link and exits non-zero only when the config or the
+API secret is invalid or the very first login fails (also when the server certificate does not
+match the pin).
 
 ## Connection and identity
 

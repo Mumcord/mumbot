@@ -20,3 +20,11 @@ channels = ["Lobby"]
 # [[token]]
 # channel = "Secret"
 # password = "hunter2"
+
+# Only for `mumbot peer` (relay discovery for Mumcord clients, docs/peer.md). It also needs
+# server.server_cert_sha256 (SHA-256 of the Mumble server certificate). The API secret comes from
+# MUMBOT_PEER_API_SECRET or a private file, never from this file.
+# [peer]
+# api_url = "http://127.0.0.1:7480"
+# api_secret_file = "/run/secrets/mumbot_peer_api_secret"
+# api_fp = "SHA-256 OF THE RELAY API CERTIFICATE, REQUIRED FOR HTTPS"

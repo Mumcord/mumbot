@@ -24,7 +24,7 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 const SUPERUSER: &str = "SuperUser";
 
 /// Capacity of the raw event broadcast; slow subscribers lose the oldest events.
-const BROADCAST_CAPACITY: usize = 1024;
+pub(crate) const BROADCAST_CAPACITY: usize = 1024;
 
 #[derive(Debug, Clone)]
 pub struct BotConfig {
@@ -42,6 +42,10 @@ pub struct BotConfig {
     pub password: Option<String>,
     /// Channel passwords (Mumble access tokens) presented at login (mumcord FR-2.78).
     pub tokens: Vec<String>,
+    /// SHA-256 (lowercase hex) of the server certificate; when set, any other certificate is
+    /// refused. Only the peer bot sets it; without it every certificate is accepted (local test
+    /// servers are self-signed).
+    pub server_cert_sha256: Option<String>,
     pub timeout: Duration,
 }
 
@@ -57,6 +61,7 @@ impl BotConfig {
             superuser: false,
             password: None,
             tokens: Vec::new(),
+            server_cert_sha256: None,
             timeout: DEFAULT_TIMEOUT,
         }
     }
@@ -91,8 +96,12 @@ impl BotConfig {
             password,
             tokens: self.tokens.clone(),
             identity,
-            // Bots only talk to the local test servers, whose certificates are self-signed.
-            verify_cert: Arc::new(|_| true),
+            verify_cert: match self.server_cert_sha256.clone() {
+                Some(pin) => Arc::new(move |cert| cert.sha256_hex == pin),
+                // The test bot only talks to local test servers, whose certificates are
+                // self-signed.
+                None => Arc::new(|_| true),
+            },
             login_timeout: self.timeout,
         })
     }
@@ -144,7 +153,12 @@ impl Bot {
         Self::connect_with(config, events).await
     }
 
-    async fn connect_with(config: BotConfig, events: broadcast::Sender<Event>) -> Result<Self> {
+    /// Connects and forwards events to `events`, so a subscriber can listen from the very first
+    /// event on.
+    pub(crate) async fn connect_with(
+        config: BotConfig,
+        events: broadcast::Sender<Event>,
+    ) -> Result<Self> {
         let conn = connect(config.connect_config()?).await.with_context(|| {
             format!(
                 "connecting {:?} to {}:{}",
