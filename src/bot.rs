@@ -43,7 +43,8 @@ pub struct BotConfig {
     /// Channel passwords (Mumble access tokens) presented at login (mumcord FR-2.78).
     pub tokens: Vec<String>,
     /// SHA-256 (lowercase hex) of the server certificate; when set, any other certificate is
-    /// refused. Without it every certificate is accepted (local test servers are self-signed).
+    /// refused. Only the peer bot sets it; without it every certificate is accepted (local test
+    /// servers are self-signed).
     pub server_cert_sha256: Option<String>,
     pub timeout: Duration,
 }

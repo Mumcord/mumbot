@@ -174,7 +174,14 @@ impl WebhookConfig {
         if self.keys.is_empty() {
             bail!("config has no API key");
         }
-        self.server_cert_pin()?;
+        // Pinning is the peer bot's requirement (mumcord spec 04, FR-4.28); for the webhook bot
+        // it is a later decision (roadmap, "Server certificate check"), so a pin here would only
+        // look like protection.
+        if self.server.server_cert_sha256.is_some() {
+            bail!(
+                "server.server_cert_sha256 is only used by `mumbot peer`; remove it for the webhook bot"
+            );
+        }
         for entry in &self.keys {
             if entry.key.is_empty() {
                 bail!("a key entry is empty");
@@ -417,6 +424,7 @@ api_secret_file = "relay.secret"
         let pin = format!("{}AB", "AB:".repeat(31));
         let config: WebhookConfig = toml::from_str(&text.replace("PIN", &pin)).expect("config");
         config.validate_peer().expect("no key needed");
+        assert!(config.validate().is_err(), "the webhook bot does not pin");
         assert_eq!(
             config.bot_config().server_cert_sha256,
             Some("ab".repeat(32)),
