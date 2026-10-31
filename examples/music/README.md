@@ -13,11 +13,6 @@ curl -s -X POST http://127.0.0.1:8081/play \
 The bot is an ordinary Mumble client. Nothing is installed or changed on the server; it works
 with any standard Mumble server (murmur / mumble-server).
 
-> [!NOTE]
-> The music module is on `main` and ships with the next release after 0.1.1. Until then, build
-> the image yourself (`docker build -t ghcr.io/mumcord/mumbot:0.1.0 .` in the repository root)
-> or change the image tag once the release is out.
-
 ## Prerequisites
 
 - Docker with the Compose plugin (`docker compose version` prints 2.20 or newer, for `--wait`).
