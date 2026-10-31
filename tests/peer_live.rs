@@ -162,6 +162,7 @@ fn peer_config(dir: &Path, name: &str, relay_url: &str, pin: String) -> Arc<Webh
             api_secret_file: Some(secret_file),
             api_fp: None,
         }),
+        history: None,
     })
 }
 
