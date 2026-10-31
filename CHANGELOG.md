@@ -14,8 +14,8 @@ All notable changes to Mumbot are listed here. The format follows
   certificate. See `docs/peer.md` (#8).
 - `server.server_cert_sha256` for the peer bot (required): pins the Mumble server certificate;
   any other certificate is refused. The webhook bot rejects the key for now.
-- Docker Compose example `examples/peer-with-relay/` (Mumble server, mumpeer relay, peer bot);
-  the relay image is a placeholder until mumpeer is released.
+- Docker Compose example `examples/peer-with-relay/` (Mumble server, mumpeer relay, peer bot),
+  using the released `ghcr.io/mumcord/mumpeer:0.1.0` image.
 
 ## [0.1.1] - 2026-10-27
 

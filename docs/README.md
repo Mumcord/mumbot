@@ -25,7 +25,7 @@ certificate.
 | [`webhook/`](../examples/webhook/) | The webhook bot against a Mumble server you already run. | Available |
 | [`webhook-with-server/`](../examples/webhook-with-server/) | The webhook bot plus a standard Mumble server, to try it on one machine. | Available |
 | [`ci-test-bot/`](../examples/ci-test-bot/) | The scripted test bot in a CI pipeline against a throwaway server. | Available |
-| [`peer-with-relay/`](../examples/peer-with-relay/) | The peer bot with a mumpeer relay and a standard Mumble server. | Placeholder relay image until mumpeer is released |
+| [`peer-with-relay/`](../examples/peer-with-relay/) | The peer bot with a mumpeer relay and a standard Mumble server. | Released mumpeer relay image |
 | `music/` | The music bot. | Coming with [#3](https://github.com/Mumcord/mumbot/issues/3) |
 | `history/` | The history bot with a persistent volume for its database. | Coming with [#2](https://github.com/Mumcord/mumbot/issues/2) |
 | `multi-module/` | Several modules in one setup. | Coming with [#5](https://github.com/Mumcord/mumbot/issues/5) |
