@@ -4,6 +4,15 @@ All notable changes to Mumbot are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Peer module (off by default, `[peer]` in `bot.toml`): announces a mumpeer relay (addresses
+  and certificate fingerprint) to Mumcord clients over plugin data, hands out short-lived relay
+  tokens for one pair of users, and keeps the relay's allowlist in step with the users on the
+  server. A config with only `[peer]` needs no webhook key. See `docs/peer.md` (#8).
+
 ## [0.1.1] - 2026-10-27
 
 ### Fixed

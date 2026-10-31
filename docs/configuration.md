@@ -45,7 +45,8 @@ environment variable.
 ## `[[keys]]`: API keys (at least one)
 
 One block per outside system. A request is only accepted with one of these keys, and only for
-that key's channels.
+that key's channels. A config with a `[peer]` section may have no key at all; the bot then only
+runs the peer module and answers `GET /health`.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -63,6 +64,23 @@ is accepted as well.
 | --- | --- | --- | --- |
 | `channel` | name or id | required | The channel the password is for. |
 | `password` | string | required | The channel password. Never logged. |
+
+## `[peer]`: relay discovery (optional)
+
+Off unless the section is present. Announces a mumpeer relay to Mumcord clients and registers
+their certificates and tokens with the relay's API; see [peer.md](peer.md).
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `udp` | list of `"host:port"`, not empty | required | Relay addresses for UDP, which clients try first. |
+| `tcp` | list of `"host:port"` | `[]` | TCP fallback addresses, usually port 443, for networks that block UDP. |
+| `fingerprint` | string | required | SHA-256 of the relay's TLS certificate: 64 hex digits, colons allowed (`openssl x509 -noout -fingerprint -sha256`). Clients only accept a relay with this certificate. |
+| `api_url` | URL | required | Base URL of the relay's management API, for example `"http://127.0.0.1:8090"`. Plain HTTP to another host logs a warning; use `https` there. |
+| `secret_file` | path | required | File with the API secret on its first line. Keep it private (`chmod 600`) and out of Git (`*.secret` is git-ignored). The secret is never logged. |
+| `token_ttl_secs` | integer, 1 to 600 | `120` | How long a token for one pair of users is valid. |
+
+All addresses together must fit one plugin data message (1000 bytes); the config check reports
+it otherwise.
 
 ## Environment variables
 
