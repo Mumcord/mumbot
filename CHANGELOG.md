@@ -4,6 +4,19 @@ All notable changes to Mumbot are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Peer bot `mumbot peer --config bot.toml` (Mumcord#62): announces a mumpeer relay to Mumcord
+  clients over plugin data (`mumcord.peer`), fetches pair tokens from the relay's API on request
+  and tells the relay when someone leaves. Needs the new `[peer]` section and a pinned server
+  certificate. See `docs/peer.md` (#8).
+- `server.server_cert_sha256` for the peer bot (required): pins the Mumble server certificate;
+  any other certificate is refused. The webhook bot rejects the key for now.
+- Docker Compose example `examples/peer-with-relay/` (Mumble server, mumpeer relay, peer bot);
+  the relay image is a placeholder until mumpeer is released.
+
 ## [0.1.1] - 2026-10-27
 
 ### Fixed

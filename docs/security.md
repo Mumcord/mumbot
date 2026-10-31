@@ -7,7 +7,7 @@ What mumbot protects, what it does not (yet), and what an operator has to take c
 | Area | State |
 | --- | --- |
 | Connection to the Mumble server | Always TLS, with the bot's own client certificate. |
-| Checking the server's certificate | **Not done yet:** the bot accepts any server certificate (see below). |
+| Checking the server's certificate | Only the peer bot: it requires `server.server_cert_sha256` and refuses any other certificate. The webhook and test bots accept any server certificate (see below). |
 | HTTP API | Plain HTTP, loopback by default; API keys in a header, compared in constant time. |
 | Secrets in files | `bot.toml`, `.env` and certificates are git-ignored; only placeholders in the repository. |
 | Logs | Request metadata only: no keys, no passwords, no message texts. |
@@ -64,13 +64,15 @@ What mumbot protects, what it does not (yet), and what an operator has to take c
 
 - The connection to the server is always TLS; there is no plaintext mode. Voice goes over UDP
   with the server's encryption, or through the TLS tunnel as fallback.
-- **The server's certificate is not checked yet.** The bot core comes from Mumcord's test bot,
-  which only talked to self-signed local test servers, so it accepts any server certificate
-  without pinning or a warning. Someone who can intercept the network path between the bot and
+- **Only the peer bot checks the server's certificate.** It hands out relay tokens, so it refuses
+  to start without `server.server_cert_sha256` and refuses any server with another certificate.
+  The webhook and test bots come from Mumcord's test bot, which only talked to self-signed local
+  test servers, so they accept any server certificate without a warning. Someone who can
+  intercept the network path between the bot and
   the server could impersonate the server and read what the bot sends.
-- Until pinning exists, run the bot where that path is trusted: on the same host or private
+- For the webhook bot, run it where that path is trusted: on the same host or private
   network as the server (as in [`examples/webhook-with-server`](../examples/webhook-with-server/)),
-  or over a VPN. Pinning the server certificate on first use and refusing a changed one is
+  or over a VPN. Pinning the server certificate for these bots is
   planned ([roadmap](../specs/roadmap.md), "Server certificate check").
 
 ## Passwords

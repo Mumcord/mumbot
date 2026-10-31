@@ -5,10 +5,12 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use mumcord_protocol::{Event, Handle, TextTarget, permissions};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, broadcast};
 
 use crate::Bot;
+use crate::bot::BROADCAST_CAPACITY;
 use crate::checks::resolve_channel;
+use crate::peer::{Link, Users};
 use crate::webhook::MAX_MESSAGE_CHARS;
 use crate::webhook::config::{ApiKey, ChannelRef, WebhookConfig};
 use crate::webhook::http::{Api, DeliveryError, serve};
@@ -21,6 +23,8 @@ pub struct BotApi {
     bot: Arc<Mutex<Option<Bot>>>,
     config: Arc<WebhookConfig>,
     started: Instant,
+    /// Outlives reconnects, so a subscriber keeps one stream across them.
+    events: broadcast::Sender<Event>,
 }
 
 impl BotApi {
@@ -29,12 +33,19 @@ impl BotApi {
             bot: Arc::new(Mutex::new(None)),
             config,
             started: Instant::now(),
+            events: broadcast::channel(BROADCAST_CAPACITY).0,
         }
+    }
+
+    /// Events of the connection, from the next one on; subscribe before [`BotApi::connect`] to
+    /// see everything from the login on.
+    pub fn subscribe(&self) -> broadcast::Receiver<Event> {
+        self.events.subscribe()
     }
 
     /// Logs in and joins the configured channel.
     pub async fn connect(&self) -> Result<()> {
-        let bot = Bot::connect(self.config.bot_config()).await?;
+        let bot = Bot::connect_with(self.config.bot_config(), self.events.clone()).await?;
         let mut guard = self.bot.lock().await;
         let bot = guard.insert(bot);
         if let Some(channel) = &self.config.server.channel {
@@ -189,6 +200,33 @@ impl Api for BotApi {
     }
 }
 
+/// The peer module's view of the bot (`src/peer/`).
+impl Link for Arc<BotApi> {
+    async fn users(&self) -> Option<Users> {
+        let guard = self.bot.lock().await;
+        let bot = guard.as_ref().filter(|bot| bot.handle().is_connected())?;
+        let state = bot.state();
+        Some(Users {
+            own: state.session?,
+            certs: state
+                .users
+                .values()
+                .map(|user| (user.session, user.cert_hash.clone()))
+                .collect(),
+        })
+    }
+
+    async fn send(&self, receivers: &[u32], data: Vec<u8>) -> Result<()> {
+        let guard = self.bot.lock().await;
+        let bot = guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("bot is not connected"))?;
+        bot.handle()
+            .send_plugin_data(receivers, crate::peer::wire::DATA_ID, data)?;
+        Ok(())
+    }
+}
+
 /// Runs the bot and the listener until the process is stopped (Q1.2, Q3.8).
 pub async fn run(config: Arc<WebhookConfig>) -> Result<()> {
     if !config.listens_locally() {
@@ -207,22 +245,21 @@ pub async fn run(config: Arc<WebhookConfig>) -> Result<()> {
     );
     let api = Arc::new(BotApi::new(Arc::clone(&config)));
     api.connect().await?;
-    let supervisor = {
-        let api = Arc::clone(&api);
-        async move {
-            loop {
-                if !api.connected().await {
-                    tracing::warn!("connection lost, reconnecting");
-                    if let Err(error) = api.reconnect().await {
-                        tracing::warn!(%error, "reconnect failed");
-                    }
-                }
-                tokio::time::sleep(RECONNECT_DELAY).await;
-            }
-        }
-    };
     tokio::select! {
         result = serve(listener, config, Arc::clone(&api)) => result,
-        result = supervisor => result,
+        result = supervise(Arc::clone(&api)) => result,
+    }
+}
+
+/// Reconnects whenever the link dropped (FR-1.1); runs until the process is stopped.
+pub async fn supervise(api: Arc<BotApi>) -> Result<()> {
+    loop {
+        if !api.connected().await {
+            tracing::warn!("connection lost, reconnecting");
+            if let Err(error) = api.reconnect().await {
+                tracing::warn!(%error, "reconnect failed");
+            }
+        }
+        tokio::time::sleep(RECONNECT_DELAY).await;
     }
 }

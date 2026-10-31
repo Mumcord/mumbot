@@ -58,6 +58,13 @@ enum Command {
         #[arg(long, env = "MUMBOT_CONFIG")]
         config: PathBuf,
     },
+    /// Run the peer bot: announces a mumpeer relay to Mumcord clients and hands out relay
+    /// tokens, see docs/peer.md. Ignores the connection options above.
+    Peer {
+        /// TOML config file with the server settings and the `[peer]` section.
+        #[arg(long, env = "MUMBOT_CONFIG")]
+        config: PathBuf,
+    },
     #[command(flatten)]
     Test(cli::Command),
 }
@@ -73,6 +80,13 @@ async fn main() -> Result<()> {
             let config = Arc::new(WebhookConfig::load(&config)?);
             return webhook::run(config).await;
         }
+        Command::Peer { config } => {
+            tracing_subscriber::fmt()
+                .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+                .init();
+            let config = Arc::new(WebhookConfig::load_peer(&config)?);
+            return mumbot::peer::run_bot(config).await;
+        }
         Command::Test(command) => command,
     };
     let bot = Bot::connect(BotConfig {
@@ -84,6 +98,7 @@ async fn main() -> Result<()> {
         superuser: cli.superuser,
         password: None,
         tokens: Vec::new(),
+        server_cert_sha256: None,
         timeout: Duration::from_secs(cli.timeout),
     })
     .await?;
@@ -130,6 +145,7 @@ mod tests {
                 "-3,0,0",
             ],
             &["webhook", "--config", "bot.toml"],
+            &["peer", "--config", "bot.toml"],
         ] {
             assert!(parse(args).is_ok(), "{args:?}");
         }
