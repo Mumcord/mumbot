@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <b>Bots that join your Mumble server like a person would: post alerts, announce a relay, drive tests.</b><br />
+  <b>Bots that join your Mumble server like a person would: post alerts, announce a relay, keep chat history, play music, drive tests.</b><br />
   <a href="#quick-start">Quick start</a> ·
   <a href="docs/README.md">Docs</a> ·
   <a href="examples/README.md">Examples</a> ·
@@ -41,8 +41,9 @@ same in the official Mumble client and in [Mumcord](https://github.com/Mumcord/m
 | **`history`** | Stays online, records the chat of the channels you choose and hands it to Mumcord clients that were offline (history sync). | main + tester | [history.md](docs/history.md) |
 
 > [!NOTE]
-> The `peer` and `music` modules, `mumbot run` and the separate tester build are on `main` and
-> ship with the next release. Release 0.1.1 has the webhook bot and the test bot in one build.
+> The `peer`, `history` and `music` modules, `mumbot run`, the `[voice]` settings and the
+> separate tester build are on `main` and ship with the next release. Release 0.1.1 has the
+> webhook bot and the test bot in one build.
 
 ## How it fits together
 
@@ -143,6 +144,8 @@ local or throwaway servers.
 
 ## Running several modules
 
+From the next release (on `main` today):
+
 ```bash
 mumbot webhook --config bot.toml                          # one module
 mumbot peer --config bot.toml
@@ -160,7 +163,29 @@ enabled = ["webhook", "peer", "history"]
 ```
 
 The command line wins over the config. Only the sections of the chosen modules are checked, and
-when one module fails the whole bot stops. Details: [docs/modules.md](docs/modules.md).
+when one module fails the whole bot stops. In Docker, set the container command to `run` and
+choose the modules with `MUMBOT_MODULES` or `[modules]`; the image runs `webhook` by default.
+Details: [docs/modules.md](docs/modules.md).
+
+## Music API
+
+The music module has its own HTTP listener (`127.0.0.1:8081` by default) and its own API keys
+(`[[music.keys]]`, sent as `X-API-Key`), separate from the webhook's:
+
+| Endpoint | Does |
+| --- | --- |
+| `POST /play` | Queue an MP3: `{"file": "…"}` from `media_dir`, `{"url": "…"}` from an allowed host, or an `audio/mpeg` upload; optional `channel` and `interrupt`. |
+| `GET /queue` · `GET /now-playing` | The current track, the waiting tracks and the volume. |
+| `POST /skip` · `POST /stop` | Skip the current track; stop and clear the queue. |
+| `POST /volume` | `{"volume": 0–100}`. |
+| `GET /health` | Connection state, no key needed. |
+
+```bash
+curl -s -X POST http://127.0.0.1:8081/play -H "X-API-Key: $MUSIC_KEY" -d '{"file": "jingle.mp3"}'
+# {"queued":true,"id":1,"position":0,"title":"Artist – Jingle"}
+```
+
+Sources, limits and error codes: [docs/music.md](docs/music.md).
 
 ## Configuration
 
@@ -176,6 +201,18 @@ One TOML file (`bot.toml`, in Docker `/config/bot.toml`) with a section per conc
 | `[music]`, `[[music.keys]]` | The music module's listener, media folder, URL allowlist, limits and API keys. |
 | `[history]` | Channels to record, retention and database for the history module. |
 | `[voice]` | Voice bitrate (`bitrate`, `--bitrate`, `MUMBOT_VOICE_BITRATE`). |
+
+Voice senders (the music module and the tester's `play`) use one bitrate setting:
+
+```toml
+[voice]
+bitrate = 96000   # bit/s, 6000 to 510000; default 96000
+frame_ms = 20     # packet length: 10 or 20
+```
+
+`--bitrate`/`--frame-ms` win over `MUMBOT_VOICE_BITRATE`/`MUMBOT_VOICE_FRAME_MS`, which win over
+`[music] bitrate`/`frame_ms`, which win over `[voice]`. The server's bandwidth limit always wins:
+the bot lowers the bitrate to fit and logs a warning.
 
 Secrets such as `SERVER_PASSWORD` and `MUMBOT_PEER_API_SECRET` come from the environment. Every
 key, default and variable: [docs/configuration.md](docs/configuration.md); a commented start:
@@ -218,8 +255,13 @@ key, default and variable: [docs/configuration.md](docs/configuration.md); a com
   rate-limited and limited to their channels.
 - Files only from the configured media folder; URLs are off by default, then only from listed
   hosts, never to private addresses, without redirects, with size, length and time limits.
+
 **History**
-- Records only the channels you list, never private messages, and keeps messages at most 7 days.
+- Records only the channels you list (`[history] channels`), never private messages, never voice.
+- Keeps messages at most 7 days (`retention_days`, 1 to 7) and the newest 5000 per channel
+  (`max_messages_per_channel`); older ones are deleted. Its comment tells everyone what it records.
+- Set `server.server_cert_sha256`: it hands out recorded chat, and with the pin it refuses any
+  other server.
 - The SQLite file is readable only by the bot's user; chat texts never go into logs.
 
 **Test bot (tester build)**
@@ -239,6 +281,9 @@ More: [docs/security.md](docs/security.md).
 | [`history/`](examples/history/) | Run the history bot against the Mumble server you already have. |
 | [`ci-test-bot/`](examples/ci-test-bot/) | Test a Mumble client in CI against a throwaway server (tester image). |
 
+The `peer-with-relay`, `music` and `history` examples need the next release's image; until then,
+build the image from this repository as [`examples/music/README.md`](examples/music/README.md) shows.
+
 ## Releases and variants
 
 Every release ships two variants. Both binaries are called `mumbot`; only the archive and image
@@ -246,8 +291,9 @@ names differ. Check downloads against `SHA256SUMS` from the same release.
 
 | | **mumbot** (main) | **mumbot-tester** |
 | --- | --- | --- |
-| Contains | The production modules (`webhook`, `peer`, `history`). No test code. | The same plus the scripted test bot (checks, voice, samples). |
+| Contains | The production modules (`webhook`, `peer`, `history`, `music`). No test code. | The same plus the scripted test bot (checks, voice, samples). |
 | Use it for | Bots on real servers. | Testing Mumble servers and clients in CI. |
+| Archive | `mumbot-<version>-<target>` | `mumbot-tester-<version>-<target>` |
 | Docker image | `ghcr.io/mumcord/mumbot:<version>` | `ghcr.io/mumcord/mumbot-tester:<version>` |
 | Linux x86_64 (static) | `mumbot-<version>-linux-x86_64.tar.gz` | `mumbot-tester-<version>-linux-x86_64.tar.gz` |
 | Linux arm64 (static) | `mumbot-<version>-linux-aarch64.tar.gz` | `mumbot-tester-<version>-linux-aarch64.tar.gz` |
@@ -272,7 +318,7 @@ cargo build --release --features tester   # mumbot-tester
 | --- | --- |
 | [Mumcord](https://github.com/Mumcord/mumcord) | A modern desktop voice and chat client for standard Mumble servers. |
 | [mumpeer](https://github.com/Mumcord/mumpeer) | A relay that connects Mumcord clients when a direct link fails. |
-| **mumbot** | Friendly headless bots: webhooks, relay discovery, test automation. |
+| **mumbot** | Friendly headless bots: webhooks, relay discovery, chat history, music, test automation. |
 
 mumbot is built on Mumcord's protocol and codec crates
 ([`mumcord-protocol`](https://crates.io/crates/mumcord-protocol),
