@@ -1,6 +1,6 @@
 //! Smoke test of every `mumbot` subcommand against the local 1.5 test server, observed by
 //! a library bot. Start the server first (`testenv/up.sh`), then:
-//! `MUMBOT_LIVE=1 cargo test --test cli -- --ignored --test-threads=1`
+//! `MUMBOT_LIVE=1 cargo test --features tester --test cli -- --ignored --test-threads=1`
 
 #![cfg(feature = "tester")]
 
