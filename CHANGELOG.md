@@ -6,6 +6,8 @@ All notable changes to Mumbot are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-31
+
 ### Added
 
 - Configurable voice bitrate (#7): `[voice] bitrate` and `frame_ms` in the config, `--bitrate` and
@@ -83,7 +85,7 @@ All notable changes to Mumbot are listed here. The format follows
 - Reference documentation in `docs/`: configuration, CLI, HTTP API and security notes, plus an
   overview page; a new README.
 
-## [0.1.0] – Unreleased
+## [0.1.0] - 2026-10-27
 
 ### Changed
 
