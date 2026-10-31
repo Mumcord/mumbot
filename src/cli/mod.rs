@@ -15,6 +15,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use mumbot::Bot;
 use mumbot::voice::BotVoice;
+use mumbot::voice_settings::VoiceSettings;
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
@@ -52,6 +53,8 @@ impl Toggle {
 pub struct Session {
     bot: Bot,
     voice: Option<BotVoice>,
+    /// What `--bitrate`, `--frame-ms` and the environment asked for.
+    voice_settings: VoiceSettings,
 }
 
 impl Session {
@@ -67,8 +70,17 @@ impl Session {
 /// Runs the command given on the command line (`script` reads further commands from stdin),
 /// stays connected for `hold` after it succeeded and then disconnects cleanly, so everything the
 /// bot sent reaches the server first. A failed command ends the run without the hold.
-pub async fn run_top_level(bot: Bot, command: Command, hold: Duration) -> Result<()> {
-    let mut session = Session { bot, voice: None };
+pub async fn run_top_level(
+    bot: Bot,
+    command: Command,
+    hold: Duration,
+    voice_settings: VoiceSettings,
+) -> Result<()> {
+    let mut session = Session {
+        bot,
+        voice: None,
+        voice_settings,
+    };
     let result = match command {
         Command::Script => run_script(&mut session).await,
         command => run(&mut session, command).await,
@@ -76,7 +88,7 @@ pub async fn run_top_level(bot: Bot, command: Command, hold: Duration) -> Result
     if result.is_ok() {
         tokio::time::sleep(hold).await;
     }
-    let Session { bot, voice } = session;
+    let Session { bot, voice, .. } = session;
     drop(voice);
     let disconnected = bot.disconnect().await;
     result?;
