@@ -1,5 +1,5 @@
-# Copy to mumpeer.toml and adjust public_host. Placeholder values only; the format is mumpeer's
-# (Mumcord spec 04, section 7.5) and mumpeer's README is authoritative once it is released.
+# Copy to mumpeer.toml and adjust public_host. Every key and its default: mumpeer's
+# mumpeer.example.toml and README (Mumcord/mumpeer).
 
 # The address Mumcord clients connect to. 127.0.0.1 works for clients on this machine; use the
 # host's public name or IP (and RELAY_BIND=0.0.0.0 in .env) for others.

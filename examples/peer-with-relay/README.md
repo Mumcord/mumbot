@@ -5,13 +5,14 @@ mumbot's peer bot side by side. Mumcord clients that join the server learn about
 the bot and can then use it for P2P features (screen sharing, full-size images) when a direct
 connection fails. How the bot works: [docs/peer.md](../../docs/peer.md).
 
-> **Status:** mumpeer is not released yet. `MUMPEER_IMAGE`, the relay's `command` and
-> `mumpeer.example.toml` are placeholders until it is; check them against mumpeer's README then.
+> **Status:** the first mumpeer image (`ghcr.io/mumcord/mumpeer:0.1.0`) is published with
+> mumpeer's first release; until then build it from Mumcord/mumpeer
+> (`docker build -t ghcr.io/mumcord/mumpeer:0.1.0 .`).
 
 | Service | Image | Reachable at |
 | --- | --- | --- |
 | `mumble-server` | `mumblevoip/mumble-server:v1.5.735` (unmodified upstream image) | `127.0.0.1:64738` (Mumble client) |
-| `mumpeer` | `ghcr.io/mumcord/mumpeer:0.1.0` (placeholder) | `443/udp` and `443/tcp` on `RELAY_BIND` (Mumcord clients); API on loopback inside the pair |
+| `mumpeer` | `ghcr.io/mumcord/mumpeer:0.1.0` | `443/udp` and `443/tcp` on `RELAY_BIND` (Mumcord clients); API on loopback inside the pair |
 | `mumbot` | `ghcr.io/mumcord/mumbot:0.1.0`, command `peer` | Shares the relay's network namespace; no ports of its own |
 
 ## Prerequisites
@@ -57,6 +58,7 @@ docker compose logs mumbot
 
 ## Checks
 
+- `docker compose logs mumpeer` shows `relay fingerprint (SHA-256): …`; the bot announces it.
 - `docker compose logs mumbot` shows `peer bot connected` and `peer: relay reachable`.
 - Connect a Mumcord client to `127.0.0.1:64738`: its server info panel shows "Mumbot: Yes
   (RelayBot)" and "Mumpeer relay: Available". The packet inspector shows one `mumcord.peer`

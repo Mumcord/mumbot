@@ -23,10 +23,9 @@ services:
       retries: 30
 
   mumpeer:
-    # Placeholder until the first mumpeer release is published (Mumcord/mumpeer).
     image: ${MUMPEER_IMAGE:-ghcr.io/mumcord/mumpeer:0.1.0}
-    # Placeholder until mumpeer's README names the real flags.
-    command: ["--config", "/config/mumpeer.toml"]
+    # The image reads its config from /config/mumpeer.toml (MUMPEER_CONFIG) and runs as an
+    # unprivileged user; Docker lets it bind 443 inside its own network namespace.
     restart: unless-stopped
     environment:
       # Shared with the bot through .env, never written into a config file.
