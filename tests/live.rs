@@ -1,6 +1,8 @@
 //! Bot harness against the local 1.5 test server. Start it first (`testenv/up.sh`), then:
 //! `MUMBOT_LIVE=1 cargo test --test live -- --ignored --test-threads=1`
 
+#![cfg(feature = "tester")]
+
 use std::path::Path;
 
 use mumbot::samples::{PNG, Sample};

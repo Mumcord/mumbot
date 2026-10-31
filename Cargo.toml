@@ -44,30 +44,6 @@ tempfile = "3"
 name = "loadtest"
 required-features = ["tester"]
 
-[[test]]
-name = "cli"
-required-features = ["tester"]
-
-[[test]]
-name = "live"
-required-features = ["tester"]
-
-[[test]]
-name = "voice_live"
-required-features = ["tester"]
-
-[[test]]
-name = "webhook_live"
-required-features = ["tester"]
-
-[[test]]
-name = "webhook_tokens"
-required-features = ["tester"]
-
-[[test]]
-name = "peer_live"
-required-features = ["tester"]
-
 [lints.rust]
 unsafe_op_in_unsafe_fn = "warn"
 

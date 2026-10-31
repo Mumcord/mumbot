@@ -65,14 +65,23 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo fmt --all --check
 
-      - name: Rust lint
+      # Both release variants: the main bot and mumbot-tester (spec 03, FR-3.13).
+      - name: Rust lint (main)
         run: cargo clippy --all-targets --locked -- -D warnings
 
-      - name: Rust tests
+      - name: Rust lint (tester)
+        run: cargo clippy --all-targets --locked --features tester -- -D warnings
+
+      - name: Rust tests (main)
         run: cargo test --locked
 
+      - name: Rust tests (tester)
+        run: cargo test --locked --features tester
+
   # The acceptance tests against an unmodified standard Mumble server in Docker (testenv/): the
-  # webhook bot, the test-bot library and CLI, and voice (play, record, level checks over UDP).
+  # modules, the test-bot library and CLI, and voice (play, record, level checks over UDP). They
+  # use the test bot as the observer, so they run with the tester feature, a superset of the main
+  # build.
   live:
     name: Live tests
     needs: changes
@@ -93,7 +102,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build tests
-        run: cargo test --locked --no-run
+        run: cargo test --locked --features tester --no-run
 
       - name: Start the test server
         run: |
@@ -101,7 +110,7 @@ jobs:
           testenv/up.sh
 
       - name: Live and voice tests
-        run: cargo test --locked -- --ignored --test-threads=1
+        run: cargo test --locked --features tester -- --ignored --test-threads=1
         env:
           MUMBOT_LIVE: "1"
 
@@ -118,9 +127,17 @@ jobs:
         run: testenv/down.sh
 
   docker:
-    name: Docker image
+    name: Docker image (${{ matrix.variant }})
     needs: changes
     if: needs.changes.outputs.code == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: mumbot
+            features: ""
+          - variant: mumbot-tester
+            features: tester
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -133,9 +150,10 @@ jobs:
         with:
           context: .
           load: true
+          build-args: FEATURES=${{ matrix.features }}
           tags: mumbot:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
 
       # The bot exits when its first login fails, so the image is checked against the local test
       # server: the container must report itself healthy and connected.
@@ -193,7 +211,7 @@ jobs:
           # The examples pin the released tag; this local tag makes them run this change's image
           # instead (Compose only pulls an image that is missing).
           tags: ghcr.io/mumcord/mumbot:0.1.0
-          cache-from: type=gha
+          cache-from: type=gha,scope=mumbot
 
       - name: Smoke test webhook-with-server
         working-directory: examples/webhook-with-server
@@ -218,8 +236,9 @@ jobs:
         working-directory: examples/webhook-with-server
         run: docker compose down -v
 
-  # Mumcord's smoke tests download the static linux-aarch64 release binary; only a tag would
-  # build it otherwise. linux-x86_64 is built by the Docker job, Windows and macOS by the tests.
+  # Mumcord's smoke tests download the static linux-aarch64 mumbot-tester release binary; only a
+  # tag would build it otherwise. linux-x86_64 is built by the Docker job, Windows and macOS by
+  # the tests.
   static-arm64:
     name: Static build (linux-aarch64)
     needs: changes
@@ -234,7 +253,7 @@ jobs:
           docker run --rm -v "$PWD:/io" -w /io -e DEBIAN_FRONTEND=noninteractive \
             ghcr.io/rust-cross/cargo-zigbuild:0.24.0 sh -c \
             'apt-get update -qq && apt-get install -y -qq --no-install-recommends cmake >/dev/null &&
-             cargo zigbuild --release --locked --target aarch64-unknown-linux-musl'
+             cargo zigbuild --release --locked --target aarch64-unknown-linux-musl --features tester'
           file target/aarch64-unknown-linux-musl/release/mumbot | tee /dev/stderr | grep -q 'ARM aarch64.*statically linked'
 
   # The one required status check. Runs even when the heavy jobs were skipped (no code change),

@@ -6,6 +6,8 @@
 //! announcement, and one asks for a token for the other. The mock relay checks the API calls
 //! (mumcord spec 04, sections 6.4 and 6.6, FR-4.22 to FR-4.28).
 
+#![cfg(feature = "tester")]
+
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

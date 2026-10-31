@@ -2,6 +2,8 @@
 //! a library bot. Start the server first (`testenv/up.sh`), then:
 //! `MUMBOT_LIVE=1 cargo test --test cli -- --ignored --test-threads=1`
 
+#![cfg(feature = "tester")]
+
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;

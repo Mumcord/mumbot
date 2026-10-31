@@ -2,6 +2,8 @@
 //! `testenv/up.sh`, then:
 //! `MUMBOT_LIVE=1 cargo test --test voice_live -- --ignored --test-threads=1`
 
+#![cfg(feature = "tester")]
+
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
