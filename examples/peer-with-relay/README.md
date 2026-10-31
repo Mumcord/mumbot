@@ -5,10 +5,6 @@ mumbot's peer bot side by side. Mumcord clients that join the server learn about
 the bot and can then use it for P2P features (screen sharing, full-size images) when a direct
 connection fails. How the bot works: [docs/peer.md](../../docs/peer.md).
 
-> **Status:** the first mumpeer image (`ghcr.io/mumcord/mumpeer:0.1.0`) is published with
-> mumpeer's first release; until then build it from Mumcord/mumpeer
-> (`docker build -t ghcr.io/mumcord/mumpeer:0.1.0 .`).
-
 | Service | Image | Reachable at |
 | --- | --- | --- |
 | `mumble-server` | `mumblevoip/mumble-server:v1.5.735` (unmodified upstream image) | `127.0.0.1:64738` (Mumble client) |

@@ -1,4 +1,4 @@
-# Copy to bot.toml (git-ignored) and set the server pin. Placeholder only.
+# Copy to bot.toml (git-ignored) and set the server pin.
 # Every key: docs/configuration.md and docs/peer.md.
 
 [server]
