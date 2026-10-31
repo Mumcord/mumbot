@@ -10,6 +10,7 @@ folder is the reference; the [README](../README.md) has the quick start.
 | [Modules and builds](modules.md) | Run one module or several on one connection (`mumbot run`); the main and the tester build. |
 | [Webhook bot](webhook.md) | What the webhook bot does, how to run it, the bot's identity. |
 | [Peer bot](peer.md) | Relay discovery for Mumcord clients (`mumbot peer`): announcement, tokens, the relay API. |
+| [Music bot](music.md) | Play MP3s into a channel (`mumbot music`): endpoints, sources, URL allowlist, limits. |
 | [History bot](history.md) | Channel history for Mumcord clients that were offline (`mumbot history`): what is stored, for how long, who gets it. |
 | [Configuration](configuration.md) | Every `bot.toml` key with its default and environment variable. |
 | [CLI](cli.md) | Every command and flag of `mumbot`, plus the load test. |
@@ -28,7 +29,7 @@ certificate.
 | [`webhook-with-server/`](../examples/webhook-with-server/) | The webhook bot plus a standard Mumble server, to try it on one machine. | Available |
 | [`ci-test-bot/`](../examples/ci-test-bot/) | The scripted test bot (tester image) in a CI pipeline against a throwaway server. | Available |
 | [`peer-with-relay/`](../examples/peer-with-relay/) | The peer bot with a mumpeer relay and a standard Mumble server. | Released mumpeer relay image |
-| `music/` | The music bot. | Coming with [#3](https://github.com/Mumcord/mumbot/issues/3) |
+| [`music/`](../examples/music/) | The music bot against a Mumble server you already run, with a read-only media folder. | Next release (build the image until then) |
 | [`history/`](../examples/history/) | The history bot against a Mumble server you already run, with its database on a volume. | Available |
 
 The examples use the pinned image `ghcr.io/mumcord/mumbot:0.1.0`; `ci-test-bot` uses the tester

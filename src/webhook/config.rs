@@ -12,6 +12,7 @@ use serde::Deserialize;
 
 use crate::Module;
 use crate::history::HistoryConfig;
+use crate::music::MusicConfig;
 use crate::peer::PeerConfig;
 use crate::voice_settings::VoiceConfig;
 use crate::webhook::{DELIVERY_TIMEOUT, RATE_LIMIT_PER_MINUTE};
@@ -41,6 +42,9 @@ pub struct WebhookConfig {
     /// The peer module; ignored unless it runs.
     #[serde(default)]
     pub peer: Option<PeerConfig>,
+    /// The music module; ignored unless it runs.
+    #[serde(default)]
+    pub music: Option<MusicConfig>,
     /// The history module; ignored unless it runs.
     #[serde(default)]
     pub history: Option<HistoryConfig>,
@@ -196,6 +200,12 @@ impl WebhookConfig {
         if enabled.contains(&Module::Peer) {
             self.validate_peer()?;
         }
+        if enabled.contains(&Module::Music) {
+            let Some(music) = &self.music else {
+                bail!("config has no [music] section");
+            };
+            music.validate()?;
+        }
         if enabled.contains(&Module::History) {
             let Some(history) = &self.history else {
                 bail!("config has no [history] section");
@@ -317,9 +327,7 @@ impl WebhookConfig {
 
     /// Finds the entry a request key matches, compared in constant time (Q4.6).
     pub fn find_key(&self, presented: &str) -> Option<&ApiKey> {
-        self.keys
-            .iter()
-            .find(|entry| constant_time_eq(presented.as_bytes(), entry.key.as_bytes()))
+        find_key(&self.keys, presented)
     }
 
     /// True when the listener only serves the local machine.
@@ -334,8 +342,14 @@ impl WebhookConfig {
     }
 }
 
-fn parse_listen(value: &str) -> Option<std::net::SocketAddr> {
+pub(crate) fn parse_listen(value: &str) -> Option<std::net::SocketAddr> {
     value.parse().ok()
+}
+
+/// The entry of `keys` a request key matches, compared in constant time (Q4.6).
+pub(crate) fn find_key<'a>(keys: &'a [ApiKey], presented: &str) -> Option<&'a ApiKey> {
+    keys.iter()
+        .find(|entry| constant_time_eq(presented.as_bytes(), entry.key.as_bytes()))
 }
 
 /// Length-insensitive comparison, so a wrong key cannot be read out through timing.
@@ -572,7 +586,7 @@ channels = ["Lobby"]
             .expect("a webhook config without [modules] still works");
 
         assert!(
-            toml::from_str::<WebhookConfig>("[modules]\nenabled = [\"music\"]").is_err(),
+            toml::from_str::<WebhookConfig>("[modules]\nenabled = [\"radio\"]").is_err(),
             "an unknown module is reported"
         );
     }

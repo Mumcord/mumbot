@@ -9,8 +9,7 @@ user, one client certificate, one reconnect loop.
 | `webhook` | HTTP API that posts messages into channels ([webhook.md](webhook.md)). | `[http]`, at least one `[[keys]]` |
 | `peer` | Announces a mumpeer relay to Mumcord clients and hands out relay tokens ([peer.md](peer.md)). | `[peer]`, `server.server_cert_sha256` |
 | `history` | Records the chat of chosen channels and answers Mumcord's history sync ([history.md](history.md)). | `[history]` |
-
-The music module ([#3](https://github.com/Mumcord/mumbot/issues/3)) is planned.
+| `music` | HTTP API that plays MP3s as voice into a channel, with a queue ([music.md](music.md)). | `[music]` with a `media_dir` or URLs, at least one `[[music.keys]]` |
 
 ## Choosing modules
 
@@ -19,6 +18,7 @@ One module:
 ```bash
 mumbot webhook --config bot.toml
 mumbot peer --config bot.toml
+mumbot music --config bot.toml
 mumbot history --config bot.toml
 ```
 
@@ -37,7 +37,9 @@ enabled = ["webhook", "peer"]
 ```
 
 - The command line wins: `--modules`, `MUMBOT_MODULES`, `mumbot webhook`, `mumbot peer` and
-  `mumbot history` replace the config's list.
+  `mumbot history` and `mumbot music` replace the config's list.
+- The music module moves the shared bot user into the channel of the track it plays and back to
+  `server.channel` afterwards; the other modules work the same from any channel.
 - Only the sections of the chosen modules are checked, so one `bot.toml` can hold settings for
   modules that do not run.
 - `mumbot run` without any choice stops with an error that names both ways to choose.
@@ -49,8 +51,9 @@ Existing webhook setups need no change: `[modules]` is optional and the Docker i
 `webhook` by default. To run several modules in Docker, set the command to `run` and list the
 modules in `[modules]` or in `MUMBOT_MODULES`.
 
-The image's health check asks the webhook module's `/health` on port 8080; disable it when the
-webhook module does not run (as [`examples/history/`](../examples/history/) does).
+The image's health check asks the webhook module's `/health` on port 8080; when the webhook
+module does not run, disable it (as [`examples/history/`](../examples/history/) does) or replace it
+(the music module answers `/health` on its own port, see [`examples/music/`](../examples/music/)).
 
 ## The two builds
 
@@ -60,7 +63,7 @@ webhook module does not run (as [`examples/history/`](../examples/history/) does
 | **mumbot-tester** | The same plus the scripted test bot: every test subcommand of [cli.md](cli.md), voice checks, samples and the load test. | `mumbot-tester-<version>-<platform>` | `ghcr.io/mumcord/mumbot-tester:<version>` |
 
 Both binaries are called `mumbot`. Use the main build for production bots; it carries no test
-code (no Opus codec, no samples). Use the tester build to test Mumble servers or clients, for
+code (no voice analysis, no samples, no test commands). Use the tester build to test Mumble servers or clients, for
 example in CI ([`examples/ci-test-bot/`](../examples/ci-test-bot/)).
 
 A test command in the main build prints which build it needs and exits with code 2:
@@ -75,6 +78,6 @@ mumbot: `say` is not a command of this build. The test commands (say, expect, pl
 From source, the tester build is the Cargo feature `tester`:
 
 ```bash
-cargo build --release                     # mumbot
-cargo build --release --features tester   # mumbot-tester (also needs CMake for Opus)
+cargo build --release                     # mumbot (needs CMake for Opus, which the music module uses)
+cargo build --release --features tester   # mumbot-tester
 ```

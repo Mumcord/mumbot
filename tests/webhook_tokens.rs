@@ -81,6 +81,7 @@ fn config(
         history: None,
 
         voice: Default::default(),
+        music: None,
     })
 }
 

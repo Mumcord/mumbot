@@ -37,12 +37,12 @@ same in the official Mumble client and in [Mumcord](https://github.com/Mumcord/m
 | **`peer`** | Connects the server to a [mumpeer](https://github.com/Mumcord/mumpeer) relay: announces the relay to Mumcord clients and hands out short-lived relay tokens. | main + tester | [peer.md](docs/peer.md) |
 | **Test bot** (`say`, `expect`, `play`, `script`, …) | A scripted second participant for automated tests: chat, user state, admin steps, checks, voice play/record/level. Exit code 0 = passed. | tester only | [cli.md](docs/cli.md) |
 | **Load test** | Fills a local test server with up to 1000 users, with churn, chat and talkers. | tester, from source | [cli.md](docs/cli.md#load-test) |
-| Music | Plays an MP3 (or a URL) sent over HTTP as voice into a channel. | planned | [#3](https://github.com/Mumcord/mumbot/issues/3) |
+| **`music`** | Plays MP3s (from a media folder, an upload or an allowed URL) as voice into a channel, with a queue, skip, stop and volume over an HTTP API. | main + tester | [music.md](docs/music.md) |
 | **`history`** | Stays online, records the chat of the channels you choose and hands it to Mumcord clients that were offline (history sync). | main + tester | [history.md](docs/history.md) |
 
 > [!NOTE]
-> The `peer` module, `mumbot run` and the separate tester build are on `main` and ship with the
-> next release. Release 0.1.1 has the webhook bot and the test bot in one build.
+> The `peer` and `music` modules, `mumbot run` and the separate tester build are on `main` and
+> ship with the next release. Release 0.1.1 has the webhook bot and the test bot in one build.
 
 ## How it fits together
 
@@ -52,6 +52,7 @@ flowchart LR
     subgraph bot ["mumbot (one bot user)"]
         webhook["webhook module"]
         peer["peer module"]
+        music["music module"]
         history["history module"]
     end
     bot -- "TLS, own client certificate" --> server[("Standard Mumble server<br/>(unmodified)")]
@@ -145,9 +146,10 @@ local or throwaway servers.
 ```bash
 mumbot webhook --config bot.toml                          # one module
 mumbot peer --config bot.toml
+mumbot music --config bot.toml
 mumbot history --config bot.toml
-mumbot run --config bot.toml --modules webhook,peer,history # several, one connection, one bot user
-MUMBOT_MODULES=webhook,peer,history mumbot run --config bot.toml  # same, handy in Docker
+mumbot run --config bot.toml --modules webhook,peer,history,music # several, one connection, one bot user
+MUMBOT_MODULES=webhook,peer,history,music mumbot run --config bot.toml  # same, handy in Docker
 ```
 
 Or list them in `bot.toml` and run `mumbot run --config bot.toml`:
@@ -171,6 +173,7 @@ One TOML file (`bot.toml`, in Docker `/config/bot.toml`) with a section per conc
 | `[http]`, `[[keys]]` | The webhook module's listener and its API keys. |
 | `[[token]]` | Channel passwords (optional). |
 | `[peer]` | The mumpeer relay for the peer module. |
+| `[music]`, `[[music.keys]]` | The music module's listener, media folder, URL allowlist, limits and API keys. |
 | `[history]` | Channels to record, retention and database for the history module. |
 | `[voice]` | Voice bitrate (`bitrate`, `--bitrate`, `MUMBOT_VOICE_BITRATE`). |
 
@@ -183,6 +186,7 @@ key, default and variable: [docs/configuration.md](docs/configuration.md); a com
 | [Modules and builds](docs/modules.md) | Run one module or several; the two builds. |
 | [Webhook bot](docs/webhook.md) · [HTTP API](docs/http-api.md) | Endpoints, authentication, message format. |
 | [Peer bot](docs/peer.md) | Announce a mumpeer relay to Mumcord clients. |
+| [Music bot](docs/music.md) | Play MP3s into a channel: endpoints, sources, limits. |
 | [History bot](docs/history.md) | Record channel chat for Mumcord clients that were offline. |
 | [CLI](docs/cli.md) | Every command and flag, test-bot scripts, voice checks, load test. |
 | [Security](docs/security.md) | API keys, the client certificate, TLS, server certificate checking. |
@@ -209,6 +213,11 @@ key, default and variable: [docs/configuration.md](docs/configuration.md); a com
   never in `bot.toml` or Git.
 - Hands out short-lived relay tokens only; it never sees or relays voice.
 
+**Music**
+- Plain HTTP on `127.0.0.1:8081` by default, its own API keys (a webhook key cannot play audio),
+  rate-limited and limited to their channels.
+- Files only from the configured media folder; URLs are off by default, then only from listed
+  hosts, never to private addresses, without redirects, with size, length and time limits.
 **History**
 - Records only the channels you list, never private messages, and keeps messages at most 7 days.
 - The SQLite file is readable only by the bot's user; chat texts never go into logs.
@@ -226,6 +235,7 @@ More: [docs/security.md](docs/security.md).
 | [`webhook/`](examples/webhook/) | Run the webhook bot against the Mumble server you already have. |
 | [`webhook-with-server/`](examples/webhook-with-server/) | Try everything on one machine: bot plus a standard Mumble server. |
 | [`peer-with-relay/`](examples/peer-with-relay/) | Try the peer bot with a mumpeer relay and a standard Mumble server. |
+| [`music/`](examples/music/) | Run the music bot against the Mumble server you already have. |
 | [`history/`](examples/history/) | Run the history bot against the Mumble server you already have. |
 | [`ci-test-bot/`](examples/ci-test-bot/) | Test a Mumble client in CI against a throwaway server (tester image). |
 
@@ -252,8 +262,8 @@ names differ. Check downloads against `SHA256SUMS` from the same release.
 From source (Rust 1.90+):
 
 ```bash
-cargo build --release                     # mumbot
-cargo build --release --features tester   # mumbot-tester, also needs CMake (builds Opus)
+cargo build --release                     # mumbot, needs CMake (builds Opus for the music module)
+cargo build --release --features tester   # mumbot-tester
 ```
 
 ## Part of the Mumcord family

@@ -28,6 +28,14 @@ All notable changes to Mumbot are listed here. The format follows
   variable `MUMBOT_MODULES` or the new optional `[modules] enabled = [...]` list in the config;
   the command line wins. `mumbot webhook` and `mumbot peer` still run one module. See
   `docs/modules.md`.
+- Music module (#3): `mumbot music --config bot.toml` (or `--modules music,…`) plays MP3s as
+  voice into a channel. Its own HTTP API on `127.0.0.1:8081` with `[[music.keys]]`:
+  `POST /play` (a file from `media_dir`, an `audio/mpeg` upload, or a URL from `allow_hosts` when
+  `[music.urls]` is enabled), `GET /queue`, `GET /now-playing`, `POST /skip`, `POST /stop`,
+  `POST /volume`, `GET /health`. A queue with interrupt, the bot moves to the track's channel and
+  back, its comment shows the current track. Size, length, queue, timeout and rate limits; no
+  requests to private addresses. Uses `[music] bitrate`/`frame_ms` above `[voice]`. See
+  `docs/music.md` and `examples/music/`.
 - Tester build (#16): every release ships `mumbot-tester-<version>-<platform>` archives and the
   image `ghcr.io/mumcord/mumbot-tester` next to the main ones. Built with the Cargo feature
   `tester`.
@@ -41,6 +49,9 @@ All notable changes to Mumbot are listed here. The format follows
 - `server.server_cert_sha256` is also accepted with the history module.
 
 ### Changed
+
+- The main build contains the Opus codec again (the music module sends voice), so building it
+  from source needs CMake like the tester build.
 
 - The main build (`mumbot-<version>-<platform>`, `ghcr.io/mumcord/mumbot`) no longer contains the
   scripted test bot (#16): test subcommands such as `say`, `expect`, `play` or `script` print a

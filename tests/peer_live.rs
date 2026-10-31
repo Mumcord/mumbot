@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use mumbot::peer::PeerConfig;
 use mumbot::protocol::Event;
+use mumbot::voice_settings::VoiceSettings;
 use mumbot::webhook::{ApiKey, ChannelRef, HttpConfig, ModulesConfig, ServerConfig, WebhookConfig};
 use mumbot::{Bot, BotConfig, MessageCheck, Module, UserCheck, env, modules};
 use rustls::pki_types::CertificateDer;
@@ -165,6 +166,7 @@ fn peer_config(dir: &Path, name: &str, relay_url: &str, pin: String) -> Arc<Webh
         history: None,
 
         voice: Default::default(),
+        music: None,
     })
 }
 
@@ -235,12 +237,10 @@ async fn clients_learn_the_relay_and_a_pair_gets_a_token() {
         .await
         .expect("bob");
     let (mut alice_events, mut bob_events) = (alice.subscribe(), bob.subscribe());
-    let running = tokio::spawn(modules::run(peer_config(
-        dir.path(),
-        &bot_name,
-        &relay_url,
-        server_pin(),
-    )));
+    let running = tokio::spawn(modules::run(
+        peer_config(dir.path(), &bot_name, &relay_url, server_pin()),
+        VoiceSettings::default(),
+    ));
 
     alice
         .wait_user(&bot_name, &UserCheck::default())
@@ -303,9 +303,12 @@ async fn a_wrong_server_pin_refuses_the_server() {
     let dir = tempfile::tempdir().expect("tempdir");
     let (relay_url, _) = mock_relay().await;
     let config = peer_config(dir.path(), &unique("peerbot"), &relay_url, "00".repeat(32));
-    let result = tokio::time::timeout(Duration::from_secs(15), modules::run(config))
-        .await
-        .expect("fails fast");
+    let result = tokio::time::timeout(
+        Duration::from_secs(15),
+        modules::run(config, VoiceSettings::default()),
+    )
+    .await
+    .expect("fails fast");
     assert!(
         result.is_err(),
         "a server with another certificate is refused"
@@ -345,7 +348,7 @@ async fn webhook_and_peer_modules_share_one_connection() {
         label: "modules".to_owned(),
         channels: vec![ChannelRef::Id(0)],
     }];
-    let running = tokio::spawn(modules::run(Arc::new(config)));
+    let running = tokio::spawn(modules::run(Arc::new(config), VoiceSettings::default()));
 
     alice
         .wait_user(&bot_name, &UserCheck::default())

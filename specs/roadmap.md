@@ -13,6 +13,7 @@ Specs: `specs/{nr}-{name}-specification.md` per epic, created with the `/spec` s
 | 2 | Peer bot (`mumbot peer`, #8): announces a mumpeer relay to Mumcord clients and fetches pair tokens from its API | Built (PR #17) | Mumcord `specs/04-mumpeer-relay-specification.md` (FR-4.22 to FR-4.28, sections 6.4 and 6.6) |
 | 3 | Modular bot and two release builds (#5, #16): `mumbot run` with several modules on one connection; main build without the test bot, `mumbot-tester` with it | In progress | `specs/03-modules-specification.md` |
 | 4 | History module (#2): records the chat of chosen channels and answers Mumcord's history sync (mumcord FR-1.60) for clients that were offline | Built | `specs/04-history-specification.md` |
+| 5 | Music module (#3): plays MP3s from a media directory, uploads or allowed URLs as voice, with a queue and an HTTP API | In progress | `specs/05-music-specification.md` |
 
 ## Candidate epics (not specified yet)
 

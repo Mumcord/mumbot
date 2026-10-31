@@ -1,0 +1,40 @@
+# Copy to bot.toml (git-ignored), set your server and replace the placeholder key.
+# Placeholders only. Every key: docs/configuration.md.
+
+[server]
+# Your Mumble server. Use "host.docker.internal" if it runs on this machine.
+host = "mumble.example.org"
+port = 64738
+# The user name people see in the channel.
+name = "Music"
+# Certificate name; keep it stable so the bot keeps its identity (no spaces).
+# cert_name = "Music"
+# Channel the bot joins at login and returns to when the queue is empty.
+channel = "Lobby"
+# The connect password comes from SERVER_PASSWORD in .env; do not repeat it here.
+
+[music]
+# Inside the container the bot must listen on all interfaces so the port can be published.
+# The bot then warns that HTTP is unencrypted; docker-compose.yml publishes it to 127.0.0.1 only.
+listen = "0.0.0.0:8081"
+# Where a track plays when the request names no channel (name or id).
+channel = "Lobby"
+# The MP3s that {"file": "name.mp3"} may play (mounted from ./media).
+media_dir = "/media"
+# Start volume in percent.
+volume = 60
+# Opus bitrate of the music in bit/s; the server's bandwidth limit can lower it.
+bitrate = 96000
+
+# MP3s from the web: off by default. Only the listed hosts, never private addresses.
+# [music.urls]
+# enabled = true
+# allow_hosts = ["files.example.com"]
+
+# One block per system or person that may play. Generate a key with: openssl rand -hex 32
+[[music.keys]]
+key = "REPLACE-WITH-A-LONG-RANDOM-KEY"
+# Name used in the log; the key itself is never logged.
+label = "jukebox"
+# Channels this key may play into: names or channel ids, mixed allowed.
+channels = ["Lobby"]

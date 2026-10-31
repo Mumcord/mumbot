@@ -11,6 +11,7 @@ mod state;
 pub use config::{
     ApiKey, ChannelRef, ChannelToken, HttpConfig, ModulesConfig, ServerConfig, WebhookConfig,
 };
+pub(crate) use config::{find_key, parse_listen};
 pub use http::{Api, DeliveryError, RateLimiter, Request, Response, handle, parse_request, serve};
 pub use markdown::render_html;
 pub use state::{BotApi, supervise};

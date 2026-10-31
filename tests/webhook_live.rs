@@ -77,6 +77,7 @@ fn config(dir: &std::path::Path, name: &str) -> Arc<WebhookConfig> {
         history: None,
 
         voice: Default::default(),
+        music: None,
     })
 }
 

@@ -13,17 +13,14 @@ pub mod analysis;
 mod receive;
 pub mod wav;
 
-use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, anyhow, bail};
-use bytes::Bytes;
-use mumcord_codec::codec::{MAX_PACKET_BYTES, OpusEncoder, PacketDuration};
+use anyhow::{Result, anyhow, bail};
 use mumcord_codec::{FRAME_SAMPLES, Frame};
-use mumcord_protocol::voice::{OutgoingAudio, Transport, VoiceEvent, VoicePacket, VoiceTransport};
-use mumcord_protocol::{Event, Handle};
+use mumcord_protocol::Handle;
+use mumcord_protocol::voice::{Transport, VoiceEvent, VoicePacket, VoiceTransport};
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
@@ -35,6 +32,7 @@ pub use wav::Clip;
 use receive::Inbox;
 
 use crate::Bot;
+use crate::voice_out::{PacketEncoder, VoiceLink};
 use crate::voice_settings::{Route, VoiceSettings};
 
 const POLL: Duration = Duration::from_millis(20);
@@ -91,7 +89,7 @@ pub struct AudioHit {
 
 /// Voice side of a [`Bot`].
 pub struct BotVoice {
-    transport: Arc<VoiceTransport>,
+    link: VoiceLink,
     handle: Handle,
     inbox: Arc<Mutex<Inbox>>,
     talk: broadcast::Sender<TalkEvent>,
@@ -115,35 +113,15 @@ impl BotVoice {
     /// Starts voice for `bot` against the server it is connected to.
     pub async fn start(bot: &Bot) -> Result<Self> {
         let config = bot.config();
-        let addr: SocketAddr = tokio::net::lookup_host((config.host.as_str(), config.port))
-            .await
-            .with_context(|| format!("resolving {}", config.host))?
-            .next()
-            .ok_or_else(|| anyhow!("{} has no address", config.host))?;
         // Subscribe before starting so no tunnel/crypt event is missed.
-        let mut events = bot.subscribe();
+        let events = bot.subscribe();
         let handle = bot.handle().clone();
-        let (transport, mut voice_rx) = VoiceTransport::start(handle.clone(), addr)
-            .await
-            .context("starting voice transport")?;
-        let transport = Arc::new(transport);
+        let (link, mut voice_rx) =
+            VoiceLink::start(handle.clone(), &config.host, config.port, events).await?;
         let inbox = Arc::new(Mutex::new(Inbox::default()));
         let (talk, _) = broadcast::channel(256);
         let (packets, _) = broadcast::channel(1024);
 
-        let forward = {
-            let transport = Arc::clone(&transport);
-            tokio::spawn(async move {
-                loop {
-                    match events.recv().await {
-                        Ok(Event::CryptSetup(setup)) => transport.on_crypt_setup(setup),
-                        Ok(Event::UdpTunnel(packet)) => transport.on_tunnel(packet),
-                        Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
-                        Err(broadcast::error::RecvError::Closed) => break,
-                    }
-                }
-            })
-        };
         let receive = {
             let inbox = Arc::clone(&inbox);
             let talk = talk.clone();
@@ -174,18 +152,18 @@ impl BotVoice {
             })
         };
         Ok(Self {
-            transport,
+            link,
             handle,
             inbox,
             talk,
             packets,
-            tasks: vec![forward, receive],
+            tasks: vec![receive],
         })
     }
 
     /// The underlying transport (stats, transport kind).
     pub fn transport(&self) -> &VoiceTransport {
-        &self.transport
+        &self.link.transport
     }
 
     // ---- sending ----
@@ -200,21 +178,16 @@ impl BotVoice {
             bail!("clip is empty");
         }
         let settings = opts.settings;
-        let (duration, frames_per_packet) = match settings.frame_ms {
-            10 => (PacketDuration::Ms10, 1),
-            _ => (PacketDuration::Ms20, 2),
-        };
         let route = Route {
-            tcp_tunnel: self.transport.transport() == Transport::Tcp,
+            tcp_tunnel: self.link.transport.transport() == Transport::Tcp,
             positional: opts.position.is_some(),
         };
-        let rate = settings.capped(self.handle.with_state(|s| s.server.max_bandwidth), route);
-        rate.log_cap();
-        let bitrate = i32::try_from(rate.bitrate_bps).context("bitrate")?;
-        let mut encoder =
-            OpusEncoder::new(bitrate, duration).map_err(|e| anyhow!("encoder: {e}"))?;
-        let bitrate_bps = u32::try_from(encoder.bitrate().map_err(|e| anyhow!("encoder: {e}"))?)
-            .context("encoder bitrate")?;
+        let mut encoder = PacketEncoder::new(
+            settings,
+            self.handle.with_state(|s| s.server.max_bandwidth),
+            route,
+        )?;
+        let frames_per_packet = encoder.frames_per_packet;
         let mut ticker = tokio::time::interval(Duration::from_millis(u64::from(settings.frame_ms)));
         ticker.set_missed_tick_behavior(MissedTickBehavior::Burst);
         let started = Instant::now();
@@ -235,7 +208,9 @@ impl BotVoice {
                 }
                 ticker.tick().await;
                 let last = !opts.forever && pass + 1 == passes && i + 1 == count;
-                self.send_packet(&mut encoder, pair, last, opts.position)?;
+                self.link
+                    .transport
+                    .send_audio(encoder.encode(pair, last, opts.position)?);
                 packets += 1;
                 terminated = last;
             }
@@ -243,43 +218,19 @@ impl BotVoice {
         if !terminated {
             ticker.tick().await;
             let silence: [Frame; 2] = [[0.0; FRAME_SAMPLES]; 2];
-            self.send_packet(
-                &mut encoder,
+            self.link.transport.send_audio(encoder.encode(
                 &silence[..frames_per_packet],
                 true,
                 opts.position,
-            )?;
+            )?);
             packets += 1;
         }
         Ok(PlayReport {
             started,
             finished: Instant::now(),
             packets,
-            bitrate_bps,
+            bitrate_bps: encoder.bitrate_bps,
         })
-    }
-
-    fn send_packet(
-        &self,
-        encoder: &mut OpusEncoder,
-        pair: &[Frame],
-        last: bool,
-        position: Option<[f32; 3]>,
-    ) -> Result<()> {
-        let mut buf = [0u8; MAX_PACKET_BYTES];
-        let mut len = None;
-        let frames = u8::try_from(pair.len()).context("frames per packet")?;
-        for frame in pair {
-            len = encoder
-                .push_frame(frame, &mut buf)
-                .map_err(|e| anyhow!("encode: {e}"))?;
-        }
-        let len = len.ok_or_else(|| anyhow!("encoder produced no packet"))?;
-        self.transport.send_audio(
-            OutgoingAudio::new(Bytes::copy_from_slice(&buf[..len]), frames, last)
-                .with_position(position),
-        );
-        Ok(())
     }
 
     /// Loads `path` and plays it, see [`play`](Self::play).

@@ -17,6 +17,7 @@ use mumbot::history::store::Store;
 use mumbot::history::wire::{self, DATA_ID, Hash, Packet};
 use mumbot::history::{HistoryConfig, now_millis};
 use mumbot::protocol::Event;
+use mumbot::voice_settings::VoiceSettings;
 use mumbot::webhook::{ChannelRef, ModulesConfig, ServerConfig, WebhookConfig};
 use mumbot::{Bot, BotConfig, Module, UserCheck, env, modules};
 use tokio::sync::broadcast;
@@ -63,6 +64,7 @@ fn history_config(dir: &Path, name: &str) -> Arc<WebhookConfig> {
         keys: Vec::new(),
         tokens: Vec::new(),
         peer: None,
+        music: None,
         history: Some(HistoryConfig {
             channels: vec![
                 ChannelRef::Name("Lobby".to_owned()),
@@ -125,7 +127,10 @@ async fn a_late_mumcord_client_loads_the_recorded_channel_history() {
         .await
         .expect("alice");
     alice.join("Lobby").await.expect("alice joins Lobby");
-    let running = tokio::spawn(modules::run(history_config(dir.path(), &bot_name)));
+    let running = tokio::spawn(modules::run(
+        history_config(dir.path(), &bot_name),
+        VoiceSettings::default(),
+    ));
 
     // AC-4.1: in Lobby, listening to Raid, with the notice as its comment.
     alice
