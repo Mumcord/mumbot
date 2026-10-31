@@ -10,6 +10,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
+use crate::peer::PeerConfig;
 use crate::webhook::{DELIVERY_TIMEOUT, RATE_LIMIT_PER_MINUTE};
 
 /// Default listener: loopback only, must be changed explicitly to serve a LAN.
@@ -29,6 +30,9 @@ pub struct WebhookConfig {
     /// an error, so a typo is reported instead of silently ignored.
     #[serde(default, alias = "token")]
     pub tokens: Vec<ChannelToken>,
+    /// The relay discovery module; off unless the section is present.
+    #[serde(default)]
+    pub peer: Option<PeerConfig>,
 }
 
 #[derive(Clone, PartialEq, Eq, Deserialize)]
@@ -126,8 +130,12 @@ impl WebhookConfig {
     }
 
     fn validate(&self) -> Result<()> {
-        if self.keys.is_empty() {
+        // A bot that only runs the peer module needs no webhook key.
+        if self.keys.is_empty() && self.peer.is_none() {
             bail!("config has no API key");
+        }
+        if let Some(peer) = &self.peer {
+            peer.validate()?;
         }
         for entry in &self.keys {
             if entry.key.is_empty() {
@@ -347,6 +355,25 @@ channels = ["Lobby", 42]
             "passwords stay commented in the example"
         );
         assert!(config.listens_locally(), "the example binds to loopback");
+        assert!(config.peer.is_none(), "the peer module is off by default");
+    }
+
+    #[test]
+    fn a_peer_only_config_needs_no_key_but_a_valid_peer_section() {
+        let text = r#"
+[peer]
+udp = ["relay.example.org:3478"]
+tcp = ["relay.example.org:443"]
+fingerprint = "PLACEHOLDER"
+api_url = "http://127.0.0.1:8090"
+secret_file = "relay.secret"
+"#;
+        let valid = text.replace("PLACEHOLDER", &"ab".repeat(32));
+        let config: WebhookConfig = toml::from_str(&valid).expect("config");
+        config.validate().expect("no key needed with [peer]");
+        assert_eq!(config.peer.expect("peer").token_ttl_secs, 120);
+        let config: WebhookConfig = toml::from_str(text).expect("config");
+        assert!(config.validate().is_err(), "the fingerprint is checked");
     }
 
     #[test]

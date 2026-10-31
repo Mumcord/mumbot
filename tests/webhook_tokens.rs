@@ -73,6 +73,7 @@ fn config(
         } else {
             Vec::new()
         },
+        peer: None,
     })
 }
 

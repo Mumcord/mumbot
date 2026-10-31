@@ -25,6 +25,10 @@ clap = { version = "4", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }
 toml = "1.1"
 serde_json = "1"
+# Peer module: the relay API (mumpeer) over HTTPS with the same rustls/ring stack, and random
+# session tokens.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+getrandom = "0.3"
 
 [dev-dependencies]
 tempfile = "3"

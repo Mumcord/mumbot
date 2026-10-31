@@ -20,3 +20,13 @@ channels = ["Lobby"]
 # [[token]]
 # channel = "Secret"
 # password = "hunter2"
+
+# Relay discovery for Mumcord clients (mumpeer), off unless this section is present. The API
+# secret lives in its own file (chmod 600, never committed); see docs/peer.md.
+# [peer]
+# udp = ["relay.example.org:3478"]
+# tcp = ["relay.example.org:443"]
+# fingerprint = "SHA-256 OF THE RELAY CERTIFICATE, 64 HEX DIGITS"
+# api_url = "http://127.0.0.1:8090"
+# secret_file = "/config/relay.secret"
+# token_ttl_secs = 120

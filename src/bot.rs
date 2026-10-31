@@ -24,7 +24,7 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 const SUPERUSER: &str = "SuperUser";
 
 /// Capacity of the raw event broadcast; slow subscribers lose the oldest events.
-const BROADCAST_CAPACITY: usize = 1024;
+pub(crate) const BROADCAST_CAPACITY: usize = 1024;
 
 #[derive(Debug, Clone)]
 pub struct BotConfig {
@@ -144,7 +144,12 @@ impl Bot {
         Self::connect_with(config, events).await
     }
 
-    async fn connect_with(config: BotConfig, events: broadcast::Sender<Event>) -> Result<Self> {
+    /// Connects and forwards events to `events`, so a subscriber can listen from the very first
+    /// event on.
+    pub(crate) async fn connect_with(
+        config: BotConfig,
+        events: broadcast::Sender<Event>,
+    ) -> Result<Self> {
         let conn = connect(config.connect_config()?).await.with_context(|| {
             format!(
                 "connecting {:?} to {}:{}",

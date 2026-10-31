@@ -12,8 +12,9 @@
 *.pem
 *.key
 
-# Real config with API keys (FR-1.21): never commit.
+# Real config with API keys (FR-1.21) and the relay API secret: never commit.
 bot.toml
+*.secret
 
 # Logs and editor/OS clutter
 *.log
