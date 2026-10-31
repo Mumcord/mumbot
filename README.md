@@ -135,7 +135,7 @@ target/release/mumbot --help
 | [Modules](docs/modules.md) | Run one module or several on one connection; the two builds. |
 | [Webhook bot](docs/webhook.md) | What it does, how to run it, the bot's identity. |
 | [Peer bot](docs/peer.md) | Announce a mumpeer relay to Mumcord clients. |
-| [Configuration](docs/configuration.md) | Every `bot.toml` key, default and environment variable. |
+| [Configuration](docs/configuration.md) | Every `bot.toml` key, default and environment variable, including the voice bitrate (`[voice]`, `--bitrate`, `MUMBOT_VOICE_BITRATE`). |
 | [CLI](docs/cli.md) | Every command and flag, test-bot scripts, voice checks, load test. |
 | [HTTP API](docs/http-api.md) | Endpoints, authentication, errors, curl examples. |
 | [Security](docs/security.md) | API keys, the client certificate, TLS, server certificate checking. |
