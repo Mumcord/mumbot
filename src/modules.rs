@@ -11,6 +11,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use serde::Deserialize;
 
+use crate::history::{self, store::Store};
 use crate::peer::{self, HttpRelay};
 use crate::webhook::{self, BotApi, WebhookConfig};
 
@@ -21,6 +22,8 @@ pub enum Module {
     Webhook,
     /// Announces a mumpeer relay to Mumcord clients and hands out relay tokens (`docs/peer.md`).
     Peer,
+    /// Records channel chat and answers Mumcord's history sync (`docs/history.md`).
+    History,
 }
 
 /// Logs in once and runs the config's enabled modules until the process is stopped or one of
@@ -60,9 +63,20 @@ pub async fn run(config: Arc<WebhookConfig>) -> Result<()> {
         _ => None,
     };
 
+    let history = match (&config.history, enabled.contains(&Module::History)) {
+        (Some(history), true) => {
+            let path = history.database_path(config.server.data_dir.as_deref());
+            let store = tokio::task::spawn_blocking(move || Store::open(&path)).await??;
+            Some((history.clone(), store))
+        }
+        _ => None,
+    };
+
     let api = Arc::new(BotApi::new(Arc::clone(&config)));
-    // Subscribed before the login: Mumcord clients greet a joining bot right away.
+    // Subscribed before the login: Mumcord clients greet a joining bot right away, and the
+    // history module must see everyone arrive.
     let events = api.subscribe();
+    let history_events = api.subscribe();
     api.connect().await?;
     tracing::info!(name = %config.server.name, modules = ?enabled, "bot connected");
 
@@ -78,9 +92,18 @@ pub async fn run(config: Arc<WebhookConfig>) -> Result<()> {
             None => pending().await,
         }
     };
+    let history = async {
+        match history {
+            Some((history, store)) => {
+                history::run(history, store, Arc::clone(&api), history_events).await
+            }
+            None => pending().await,
+        }
+    };
     tokio::select! {
         result = webhook => result,
         result = peer => result,
+        result = history => result,
         result = webhook::supervise(Arc::clone(&api)) => result,
     }
 }

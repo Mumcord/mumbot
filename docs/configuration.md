@@ -1,7 +1,8 @@
 # Configuration reference
 
 The bot's modules read one TOML file, `bot.toml`, given with
-`mumbot webhook --config <file>`, `mumbot peer --config <file>` or `mumbot run --config <file>`,
+`mumbot webhook --config <file>`, `mumbot peer --config <file>`, `mumbot history --config <file>`
+or `mumbot run --config <file>`,
 or the `MUMBOT_CONFIG` environment variable. Modules that run together share the `[server]`
 section and its connection ([modules.md](modules.md)). The test bot needs no file; it takes command-line
 options ([cli.md](cli.md)) and a few environment variables (below).
@@ -22,7 +23,7 @@ Rules that apply to the whole file:
 
 | Key | Type | Default | Env | Meaning |
 | --- | --- | --- | --- | --- |
-| `enabled` | list of `"webhook"`, `"peer"` | `[]` | `MUMBOT_MODULES` (comma-separated, via `--modules`) | Modules for `mumbot run`. `--modules`, `MUMBOT_MODULES`, `mumbot webhook` and `mumbot peer` replace it. Only the sections of the chosen modules are checked. |
+| `enabled` | list of `"webhook"`, `"peer"`, `"history"` | `[]` | `MUMBOT_MODULES` (comma-separated, via `--modules`) | Modules for `mumbot run`. `--modules`, `MUMBOT_MODULES`, `mumbot webhook`, `mumbot peer` and `mumbot history` replace it. Only the sections of the chosen modules are checked. |
 
 ## `[server]`: the Mumble server and the bot's identity
 
@@ -35,7 +36,7 @@ Rules that apply to the whole file:
 | `channel` | string | none: the bot stays in the root channel | | Channel to join at login: a name (`Lobby`) or a path (`Root/Ops/Alerts`). |
 | `password` | string | none | `SERVER_PASSWORD` | Connect password, if the server has one. Without this key the bot uses `SERVER_PASSWORD`; prefer the environment variable so the file holds fewer secrets. |
 | `data_dir` | path | `MUMBOT_DATA`, else `MUMCORD_BOT_DATA`, else `$XDG_DATA_HOME/mumbot`, else `~/.local/share/mumbot` | `MUMBOT_DATA` | Folder for the client certificate (`certs/<cert_name>/`). In Docker: `/data`, keep it on a volume. |
-| `server_cert_sha256` | string | none | | Required with the peer module: SHA-256 of the server's certificate, 64 hex digits, colons allowed (`openssl x509 -noout -fingerprint -sha256`); a server with another certificate is refused. The webhook module alone rejects this key (it does not pin yet); with the peer module it protects the shared connection. |
+| `server_cert_sha256` | string | none | | Required with the peer module: SHA-256 of the server's certificate, 64 hex digits, colons allowed (`openssl x509 -noout -fingerprint -sha256`); a server with another certificate is refused. Optional with the history module. The webhook module alone rejects this key (it does not pin yet); with the peer or history module it protects the shared connection. |
 | `superuser` | boolean | `false` | `SUPERUSER_PASSWORD` | Log in as `SuperUser` with the password from `SUPERUSER_PASSWORD` instead of a certificate. Only for local test servers. |
 
 When `SERVER_PASSWORD` or `SUPERUSER_PASSWORD` is not in the environment, the bot also looks in
@@ -83,6 +84,19 @@ bot ignores it. See [peer.md](peer.md).
 | `api_url` | URL | required | | Base URL of the mumpeer relay's API, for example `"http://127.0.0.1:7480"`. Plain `http` to another host logs a warning at start; use `https` with `api_fp` there. |
 | `api_secret_file` | path | none | `MUMBOT_PEER_API_SECRET` | File with the API secret on its first line. The environment variable wins when set. One of both is required; the secret must have at least 32 characters. Keep the file private (`chmod 600`) and out of Git (`*.secret` is git-ignored). Never logged. |
 | `api_fp` | string | none | | SHA-256 of the API's TLS certificate (64 hex digits, colons allowed). Required for `https`: the relay's certificate is self-signed, so it is pinned instead of checked against certificate authorities. |
+
+## `[history]`: the history bot
+
+Used only by the history module (`mumbot history`, or `history` in `mumbot run`). What is stored
+and who gets it: [history.md](history.md).
+
+| Key | Type | Default | Environment | Meaning |
+| --- | --- | --- | --- | --- |
+| `channels` | list of names, `Root/Paths` or ids | required | | Channels to record; `["*"]` records every channel. Nothing else is recorded, private messages never. Resolved at every login: the bot listens to each recorded channel other than `server.channel`. |
+| `exclude` | list of names, `Root/Paths` or ids | `[]` | | Channels never recorded; wins over `channels`. |
+| `retention_days` | number | `7` | | Days a message is kept, 1 to 7 (history sync never asks for older messages). |
+| `max_messages_per_channel` | number | `5000` | | Newest messages kept per channel, 1 to 100000. |
+| `database` | path | `history.sqlite3` in the data directory | | SQLite file with the recorded messages; created readable only by the bot's user. Use one per server. |
 
 ## `[voice]`: bitrate of voice senders (optional)
 

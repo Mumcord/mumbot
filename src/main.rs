@@ -1,7 +1,7 @@
-//! `mumbot`: runs a headless Mumble bot. `webhook`, `peer` and `run` start the production modules
-//! (`specs/03-modules-specification.md`); with the `tester` feature, every other subcommand
-//! drives the scripted test bot from the shell (Mumcord's E2E and smoke tests, manual checks).
-//! The main build answers those with a pointer to the tester build.
+//! `mumbot`: runs a headless Mumble bot. `webhook`, `peer`, `history` and `run` start the
+//! production modules (`specs/03-modules-specification.md`); with the `tester` feature, every
+//! other subcommand drives the scripted test bot from the shell (Mumcord's E2E and smoke tests,
+//! manual checks). The main build answers those with a pointer to the tester build.
 //!
 //! A test-bot run connects once, executes one subcommand (or, with `script`, one subcommand per
 //! stdin line), optionally stays connected for `--hold` seconds and exits non-zero on the first
@@ -26,8 +26,8 @@ use mumbot::{Bot, BotConfig, Module, env, modules};
 #[command(
     name = "mumbot",
     version,
-    about = "Headless bots for standard Mumble servers: webhook and peer modules, and a scripted \
-             test bot in the tester build"
+    about = "Headless bots for standard Mumble servers: webhook, peer and history modules, and a \
+             scripted test bot in the tester build"
 )]
 struct Cli {
     #[command(flatten)]
@@ -100,6 +100,13 @@ enum Command {
         #[arg(long, env = "MUMBOT_CONFIG")]
         config: PathBuf,
     },
+    /// Run the history module alone: records the chat of the configured channels and answers
+    /// Mumcord's history sync, see docs/history.md. Ignores the connection options above.
+    History {
+        /// TOML config file with the server settings and the `[history]` section.
+        #[arg(long, env = "MUMBOT_CONFIG")]
+        config: PathBuf,
+    },
     /// Run several modules on one connection, see docs/modules.md. Ignores the connection
     /// options above.
     Run {
@@ -139,6 +146,7 @@ async fn main() -> Result<()> {
     let (config, chosen) = match cli.command {
         Command::Webhook { config } => (config, vec![Module::Webhook]),
         Command::Peer { config } => (config, vec![Module::Peer]),
+        Command::History { config } => (config, vec![Module::History]),
         Command::Run { config, modules } => (config, modules),
         #[cfg(feature = "tester")]
         Command::Test(command) => {
@@ -215,15 +223,23 @@ mod tests {
         for args in [
             &["webhook", "--config", "bot.toml"][..],
             &["peer", "--config", "bot.toml"],
+            &["history", "--config", "bot.toml"],
             &["run", "--config", "bot.toml"],
         ] {
             assert!(parse(args).is_ok(), "{args:?}");
         }
-        let cli = parse(&["run", "--config", "bot.toml", "--modules", "webhook,peer"])
-            .expect("run with modules");
+        let cli = parse(&[
+            "run",
+            "--config",
+            "bot.toml",
+            "--modules",
+            "webhook,peer,history",
+        ])
+        .expect("run with modules");
         assert!(matches!(
             cli.command,
-            Command::Run { modules, .. } if modules == [Module::Webhook, Module::Peer]
+            Command::Run { modules, .. }
+                if modules == [Module::Webhook, Module::Peer, Module::History]
         ));
         assert!(parse(&["run", "--config", "bot.toml", "--modules", "music"]).is_err());
     }
