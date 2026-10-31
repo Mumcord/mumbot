@@ -78,6 +78,7 @@ fn config(
             Vec::new()
         },
         peer: None,
+        voice: Default::default(),
     })
 }
 
