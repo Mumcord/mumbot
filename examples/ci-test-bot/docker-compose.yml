@@ -27,8 +27,10 @@ services:
   # One test-bot step per "docker compose run --rm bot <options> <subcommand>". The connection
   # options point at the server above; more options (--name, --timeout, ...) follow on the
   # command line. Exit code 0 means the step or check passed.
+  # The test bot is only in the tester image; the main image ghcr.io/mumcord/mumbot answers test
+  # commands with a pointer to it. Pin a version tag (mumbot-tester:<version>) once you use it.
   bot:
-    image: ghcr.io/mumcord/mumbot:0.1.0
+    image: ghcr.io/mumcord/mumbot-tester:latest
     entrypoint: ["mumbot", "--host", "mumble-server", "--port", "64738"]
     # Every run is one short step, never a service to keep alive.
     restart: "no"

@@ -14,7 +14,9 @@ use tokio::sync::{broadcast, mpsc, watch};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
-use crate::checks::{MessageCheck, UserCheck, find_user, resolve_channel};
+#[cfg(feature = "tester")]
+use crate::checks::{MessageCheck, UserCheck};
+use crate::checks::{find_user, resolve_channel};
 use crate::{cert, env};
 
 /// Default timeout of the `wait_*` helpers and of the login.
@@ -110,6 +112,7 @@ impl BotConfig {
 /// Admin changes to another user's voice state; `None` leaves a flag as it is. Suppression is
 /// not here: servers refuse to suppress by request, it follows from a missing Speak permission
 /// (see [`Bot::deny_speak`]).
+#[cfg(feature = "tester")]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Moderation {
     pub mute: Option<bool>,
@@ -327,6 +330,7 @@ impl Bot {
     }
 
     /// Server-mutes or -deafens the user `name` as an admin (needs the superuser bot).
+    #[cfg(feature = "tester")]
     pub fn moderate(&self, name: &str, moderation: Moderation) -> Result<()> {
         self.send_admin_user_state(
             name,
@@ -395,6 +399,7 @@ impl Bot {
     }
 
     /// Waits until the user `name` exists and matches `check`; returns that user.
+    #[cfg(feature = "tester")]
     pub async fn wait_user(&self, name: &str, check: &UserCheck) -> Result<User> {
         self.wait_until(&format!("user {name:?} with {check:?}"), |s, _| {
             find_user(s, name).filter(|u| check.matches(u, s)).cloned()
@@ -411,6 +416,7 @@ impl Bot {
     }
 
     /// Waits for a received text message matching `check` (also ones that arrived earlier).
+    #[cfg(feature = "tester")]
     pub async fn wait_message(&self, check: &MessageCheck) -> Result<TextMessage> {
         self.wait_until(&format!("message with {check:?}"), |s, log| {
             log.messages.iter().find(|m| check.matches(m, s)).cloned()
@@ -431,6 +437,7 @@ impl Bot {
     }
 
     /// Runs `send` and waits for the next `ChannelState` of `channel_id` that follows it.
+    #[cfg(feature = "tester")]
     pub(crate) async fn send_and_await_channel_update(
         &self,
         channel_id: u32,

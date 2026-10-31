@@ -16,6 +16,28 @@ All notable changes to Mumbot are listed here. The format follows
   any other certificate is refused. The webhook bot rejects the key for now.
 - Docker Compose example `examples/peer-with-relay/` (Mumble server, mumpeer relay, peer bot),
   using the released `ghcr.io/mumcord/mumpeer:0.1.0` image.
+- Modules (#5): `mumbot run --config bot.toml` runs several modules (`webhook`, `peer`) on one
+  Mumble connection and one bot user. Choose them with `--modules webhook,peer`, the environment
+  variable `MUMBOT_MODULES` or the new optional `[modules] enabled = [...]` list in the config;
+  the command line wins. `mumbot webhook` and `mumbot peer` still run one module. See
+  `docs/modules.md`.
+- Tester build (#16): every release ships `mumbot-tester-<version>-<platform>` archives and the
+  image `ghcr.io/mumcord/mumbot-tester` next to the main ones. Built with the Cargo feature
+  `tester`.
+
+### Changed
+
+- The main build (`mumbot-<version>-<platform>`, `ghcr.io/mumcord/mumbot`) no longer contains the
+  scripted test bot (#16): test subcommands such as `say`, `expect`, `play` or `script` print a
+  pointer to the tester build and exit with code 2. `register` stays in the main build.
+  **Migration:** test and CI setups (like Mumcord's E2E and smoke tests) download
+  `mumbot-tester-<version>-<platform>` or use `ghcr.io/mumcord/mumbot-tester` instead; the binary
+  inside is still called `mumbot` and every command, flag and output is unchanged. Webhook and
+  peer configs need no change.
+- From source, the load test needs `--features tester`
+  (`cargo run --release --features tester --example loadtest`).
+- The bot logs `bot connected` with its modules instead of `peer bot connected` or
+  `webhook bot listening` (now `webhook module listening`).
 
 ## [0.1.1] - 2026-10-27
 

@@ -20,19 +20,32 @@
 ## What is mumbot?
 
 One small binary (or Docker image) with headless bots for [Mumble](https://www.mumble.info/)
-voice chat. Every bot logs in with its own certificate, exactly like a person with a Mumble
+voice chat, built from modules: run one, or several together as one bot. Every bot logs in with its own certificate, exactly like a person with a Mumble
 client. So it works with **any unmodified, standard Mumble server**: no server plugin, no server
 config change, no protocol extension.
 
 | Module | What it does | Status |
 | --- | --- | --- |
 | **Webhook** | Monitoring, CI or any script sends one HTTP request with an API key; the bot posts it into a channel. | Available |
-| **Test bot** | A scripted second participant for automated tests: chat, user state, admin steps, `expect` checks, voice play/record/level checks. Exit code 0 = passed. | Available |
-| **Load test** | Fills a local server with up to 1000 users, with churn, chat and talkers. | Available |
+| **Peer** | Connects the server to a [mumpeer](https://github.com/Mumcord/mumpeer) relay: announces the relay to Mumcord clients and hands out relay tokens. | Available |
+| **Test bot** | A scripted second participant for automated tests: chat, user state, admin steps, `expect` checks, voice play/record/level checks. Exit code 0 = passed. | Available in the tester build |
+| **Load test** | Fills a local server with up to 1000 users, with churn, chat and talkers. | Available in the tester build (source only) |
 | Music | Plays an MP3 (or a URL) sent over HTTP as voice into a channel. | Coming: [#3](https://github.com/Mumcord/mumbot/issues/3) |
 | History | Stays online, records the chat it can see and hands the history to Mumcord clients that were offline. | Coming: [#2](https://github.com/Mumcord/mumbot/issues/2) |
-| Peer | Connects the server to a [mumpeer](https://github.com/Mumcord/mumpeer) relay: registers users and announces the relay. | Coming: [#8](https://github.com/Mumcord/mumbot/issues/8) |
-| Modular | Choose the modules of one bot via config file or CLI. | Coming: [#5](https://github.com/Mumcord/mumbot/issues/5) |
+
+Run one module with `mumbot webhook` or `mumbot peer`, or several on one connection (one bot
+user) with `mumbot run --modules webhook,peer` or a `[modules]` list in the config; see
+[docs/modules.md](docs/modules.md).
+
+### Two builds
+
+| Build | Contains | Archive | Docker image |
+| --- | --- | --- | --- |
+| **mumbot** | The production modules (webhook, peer). No test code. | `mumbot-<version>-<platform>` | `ghcr.io/mumcord/mumbot` |
+| **mumbot-tester** | The same plus the scripted test bot (checks, voice, samples), for testing Mumble servers and clients in CI. | `mumbot-tester-<version>-<platform>` | `ghcr.io/mumcord/mumbot-tester` |
+
+Both binaries are called `mumbot`. The main build answers a test command with a pointer to the
+tester build.
 
 ## Quick start
 
@@ -75,7 +88,8 @@ standard Mumble server next to the bot with one `docker compose up`.
 ### Binary
 
 Download from the [releases](https://github.com/Mumcord/mumbot/releases) and check it against
-`SHA256SUMS` from the same release:
+`SHA256SUMS` from the same release. For the test bot, take the same archive with the
+`mumbot-tester-` prefix:
 
 | Platform | Archive |
 | --- | --- |
@@ -98,6 +112,7 @@ README, the changelog and `bot.example.toml`.
 
 ```bash
 docker pull ghcr.io/mumcord/mumbot:0.1.0
+docker pull ghcr.io/mumcord/mumbot-tester:<version>   # with the test bot, from the next release
 ```
 
 Multi-arch (`linux/amd64`, `linux/arm64`), non-root (uid 10001), health check on `/health`.
@@ -108,7 +123,8 @@ rather than `latest`. Ready-made setups: [`examples/`](examples/README.md).
 
 ```bash
 git clone https://github.com/Mumcord/mumbot && cd mumbot
-cargo build --release          # Rust 1.90+, CMake (builds Opus)
+cargo build --release                     # main build, Rust 1.90+
+cargo build --release --features tester   # tester build, also needs CMake (builds Opus)
 target/release/mumbot --help
 ```
 
@@ -116,7 +132,9 @@ target/release/mumbot --help
 
 | | |
 | --- | --- |
+| [Modules](docs/modules.md) | Run one module or several on one connection; the two builds. |
 | [Webhook bot](docs/webhook.md) | What it does, how to run it, the bot's identity. |
+| [Peer bot](docs/peer.md) | Announce a mumpeer relay to Mumcord clients. |
 | [Configuration](docs/configuration.md) | Every `bot.toml` key, default and environment variable. |
 | [CLI](docs/cli.md) | Every command and flag, test-bot scripts, voice checks, load test. |
 | [HTTP API](docs/http-api.md) | Endpoints, authentication, errors, curl examples. |
@@ -129,9 +147,12 @@ target/release/mumbot --help
 | --- | --- |
 | [`webhook/`](examples/webhook/) | Run the webhook bot against the Mumble server you already have. |
 | [`webhook-with-server/`](examples/webhook-with-server/) | Try everything on one machine: bot plus a standard Mumble server. |
-| [`ci-test-bot/`](examples/ci-test-bot/) | Test a Mumble client in CI against a throwaway server. |
+| [`peer-with-relay/`](examples/peer-with-relay/) | Try the peer bot with a mumpeer relay and a standard Mumble server. |
+| [`ci-test-bot/`](examples/ci-test-bot/) | Test a Mumble client in CI against a throwaway server (tester image). |
 
 ## Test bot at a glance
+
+Needs the tester build (`mumbot-tester` archive or image).
 
 ```bash
 # Is Alice in "Raid" and unmuted? Exit code 0 = yes.
@@ -158,9 +179,11 @@ messages look the same in the official Mumble client and in Mumcord.
 Issues and pull requests are welcome.
 
 ```bash
-cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings && cargo test                                    # main build
+cargo clippy --all-targets --features tester -- -D warnings && cargo test --features tester  # tester build
 cp testenv/.env.example testenv/.env && testenv/up.sh     # local test server (Docker)
-MUMBOT_LIVE=1 cargo test -- --ignored --test-threads=1     # live tests against it
+MUMBOT_LIVE=1 cargo test --features tester -- --ignored --test-threads=1     # live tests against it
 ```
 
 - Features start as a spec in [`specs/`](specs/); the [roadmap](specs/roadmap.md) lists what comes

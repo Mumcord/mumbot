@@ -1,10 +1,12 @@
 //! Webhook bot against the local 1.5 test server. Start it first (`testenv/up.sh`), then:
-//! `MUMBOT_LIVE=1 cargo test --test webhook_live -- --ignored --test-threads=1`
+//! `MUMBOT_LIVE=1 cargo test --features tester --test webhook_live -- --ignored --test-threads=1`
 //!
 //! Checks the acceptance criteria of `specs/01-webhook-specification.md` in the running bot:
 //! AC-1.1 connection and reconnect, AC-1.2 message reaches the channel chat, AC-1.3 status codes,
 //! AC-1.4 `GET /channels` and `GET /health`, AC-1.5 markup, AC-1.7 parallel requests,
 //! AC-1.8 nothing beyond an unmodified standard server is needed.
+
+#![cfg(feature = "tester")]
 
 use std::sync::Arc;
 
@@ -40,6 +42,7 @@ fn rand_suffix() -> u32 {
 /// Bot under test: key `ci` may write to Lobby only, listener on loopback.
 fn config(dir: &std::path::Path, name: &str) -> Arc<WebhookConfig> {
     Arc::new(WebhookConfig {
+        modules: Default::default(),
         server: ServerConfig {
             host: env::HOST.to_owned(),
             port: env::test_port(),

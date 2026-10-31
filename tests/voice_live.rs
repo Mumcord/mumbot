@@ -1,6 +1,8 @@
 //! Voice test against the local 1.5 test server: bot A plays the speech clip, bot B records it.
 //! `testenv/up.sh`, then:
-//! `MUMBOT_LIVE=1 cargo test --test voice_live -- --ignored --test-threads=1`
+//! `MUMBOT_LIVE=1 cargo test --features tester --test voice_live -- --ignored --test-threads=1`
+
+#![cfg(feature = "tester")]
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;

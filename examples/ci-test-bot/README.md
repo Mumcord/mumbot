@@ -10,7 +10,7 @@ docker compose run --rm -T bot --name Observer expect user Alice --in Root --mut
 
 | File | What it is |
 | --- | --- |
-| `docker-compose.yml` | `mumble-server` (unmodified `mumblevoip/mumble-server:v1.5.735`) and `bot` (`ghcr.io/mumcord/mumbot:0.1.0`, one run per step) |
+| `docker-compose.yml` | `mumble-server` (unmodified `mumblevoip/mumble-server:v1.5.735`) and `bot` (`ghcr.io/mumcord/mumbot-tester`, the tester build with the test bot, one run per step) |
 | `.env.example` | the SuperUser password for admin steps and the server port |
 | `smoke-test.sh` | a complete run: two bots chat, an observer checks a user, an admin step as SuperUser |
 | `github-actions.yml` | the same setup as a GitHub Actions workflow to copy into your project |

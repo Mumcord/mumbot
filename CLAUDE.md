@@ -1,6 +1,6 @@
 # Mumbot – headless Mumble bots
 
-Mumbot builds headless bots that speak the Mumble protocol as ordinary clients and stay compatible with standard Mumble servers (murmur / mumble-server). Products: the webhook bot (`mumbot webhook --config bot.toml`) and the scripted test bot (every other subcommand), which Mumcord's E2E and smoke tests download as a release binary, so its CLI (subcommands, flags, output, exit codes) must stay compatible. Sister project: the Mumcord desktop client (`Mumcord/mumcord`), whose `mumcord-protocol` and `mumcord-codec` crates Mumbot uses.
+Mumbot builds headless bots that speak the Mumble protocol as ordinary clients and stay compatible with standard Mumble servers (murmur / mumble-server). Products: the bot's production modules (`webhook`, `peer`; one with `mumbot webhook|peer --config bot.toml`, several on one connection with `mumbot run`) and the scripted test bot (every other subcommand, only in the tester build: Cargo feature `tester`, released as `mumbot-tester`), which Mumcord's E2E and smoke tests download as a release binary, so its CLI (subcommands, flags, output, exit codes) must stay compatible. Sister project: the Mumcord desktop client (`Mumcord/mumcord`), whose `mumcord-protocol` and `mumcord-codec` crates Mumbot uses.
 Overview: `specs/roadmap.md`. Each epic gets `specs/{nr}-{name}-specification.md`; specs are created with the `/spec` skill and built with `/dev`.
 The user is a product manager and not a technical person → make technology decisions with a clear recommendation, explained simply.
 Everything is in English: chat, specs, docs, code, comments, commit messages and log/API text.
@@ -43,7 +43,7 @@ Everything is in English: chat, specs, docs, code, comments, commit messages and
 - **Async runtime:** tokio. TLS: rustls with ring (via `mumcord-protocol`).
 - **HTTP:** the webhook API is a small HTTP/1.1 handler on `tokio::net` (no web framework), JSON via serde/serde_json.
 - **Config:** TOML (`toml` + serde). CLI: clap. Logs: tracing (`RUST_LOG`).
-- **Packaging:** static musl binaries for Linux (cross-built with cargo-zigbuild), native builds for Windows and macOS, a multi-arch Docker image `ghcr.io/mumcord/mumbot` (Alpine runtime, non-root).
+- **Packaging:** two variants per release, `mumbot` (main, default features) and `mumbot-tester` (`--features tester`): static musl binaries for Linux (cross-built with cargo-zigbuild), native builds for Windows and macOS, multi-arch Docker images `ghcr.io/mumcord/mumbot` and `ghcr.io/mumcord/mumbot-tester` (Alpine runtime, non-root).
 - **CI:** GitHub Actions (`ci.yml` checks, `release.yml` on tags), Dependabot for cargo, GitHub Actions and Docker.
 
 Don't introduce anything without a reason.
@@ -64,9 +64,9 @@ Don't introduce anything without a reason.
 - Anything a bot needs that is missing in `mumcord-protocol` is first discussed for Mumcord, not patched around here.
 
 **Tests**
-- New logic gets tests. Critical flows get a live test along the acceptance criteria, against the local test server (`MUMBOT_LIVE=1 cargo test -- --ignored --test-threads=1`).
+- New logic gets tests. Critical flows get a live test along the acceptance criteria, against the local test server (`MUMBOT_LIVE=1 cargo test --features tester -- --ignored --test-threads=1`).
 - A bug is first reproduced with a test, then fixed.
-- Before "done": `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` and the live tests pass; Docker changes also `docker build` plus a `/health` check. If not, say so honestly.
+- Before "done": `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test`, both without and with `--features tester`, and the live tests (`--features tester`) pass; Docker changes also `docker build` plus a `/health` check. If not, say so honestly.
 
 **Security & privacy**
 - TLS to the Mumble server always on. Protect the bot's client certificate (it is its identity): private file permissions, never logged, never committed.

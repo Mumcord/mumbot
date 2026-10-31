@@ -1,7 +1,9 @@
 # CLI reference
 
 Everything ships in one binary, `mumbot` (`mumbot.exe` on Windows; in Docker it is the
-entrypoint). `mumbot --help` and `mumbot <subcommand> --help` print the same information.
+entrypoint). The test-bot subcommands and the load test are only in the **tester build**
+(`mumbot-tester` archive or image, Cargo feature `tester`); the main build answers them with a
+pointer to it and exit code 2 ([modules.md](modules.md#the-two-builds)). `mumbot --help` and `mumbot <subcommand> --help` print the same information.
 
 ```text
 mumbot [OPTIONS] <COMMAND>
@@ -9,6 +11,7 @@ mumbot [OPTIONS] <COMMAND>
 
 - `mumbot webhook` runs the long-lived webhook bot ([webhook.md](webhook.md)).
 - `mumbot peer` runs the long-lived peer bot that announces a mumpeer relay ([peer.md](peer.md)).
+- `mumbot run` runs several modules on one connection ([modules.md](modules.md)).
 - Every other subcommand drives the scripted **test bot**: it connects, runs the subcommand (or a
   whole script), stays connected for `--hold` seconds and exits. Before it disconnects it waits
   until the server has received everything it sent, so a `say` or `pm` is never lost.
@@ -19,7 +22,8 @@ mumbot [OPTIONS] <COMMAND>
 
 ## Global options
 
-Given before the subcommand. `webhook` and `peer` ignore them; its config file holds the connection.
+Given before the subcommand. `webhook`, `peer` and `run` ignore them; their config file holds the
+connection.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
@@ -58,13 +62,24 @@ Runs until stopped, reconnects after a dropped link and exits non-zero only when
 API secret is invalid or the very first login fails (also when the server certificate does not
 match the pin).
 
+## `run`
+
+| Usage | Option | Meaning |
+| --- | --- | --- |
+| `mumbot run --config <CONFIG> [--modules <MODULES>]` | `--config <CONFIG>` (env `MUMBOT_CONFIG`) | TOML config file with the server settings and the sections of the chosen modules. |
+| | `--modules <MODULES>` (env `MUMBOT_MODULES`) | Comma-separated modules (`webhook`, `peer`); replaces `[modules] enabled` of the config. |
+
+Logs in once and runs every chosen module on that connection. Runs until stopped, reconnects
+after a dropped link and exits non-zero when no module is chosen, the config is invalid for the
+chosen modules, the very first login fails or a module fails.
+
 ## Connection and identity
 
 | Subcommand | Does | Prints |
 | --- | --- | --- |
 | `connect` | Connect only. | `session=<n> name=<name> cert_hash=<hash>` |
 | `rename <NEW_NAME>` | Reconnect under a new name with the same certificate. | like `connect` |
-| `register` | Self-register on the server under the current name. | |
+| `register` | Self-register on the server under the current name. Also in the main build (the peer bot's setup needs it). | |
 | `avatar [FILE]` | Set the avatar from an image file. | |
 | `avatar --sample` | Set the built-in sample PNG as avatar. | |
 | `avatar --clear` | Remove the avatar. | |
@@ -190,15 +205,15 @@ message, a state change), end the script with `sleep 1` so the server receives i
 
 ## Load test
 
-`examples/loadtest.rs` is a separate program, not a `mumbot` subcommand. It connects many users
-spread over the channels of the local load-test server (`testenv/scale/`), then adds churn
+`examples/loadtest.rs` is a separate program, not a `mumbot` subcommand, and needs the tester
+feature. It connects many users spread over the channels of the local load-test server (`testenv/scale/`), then adds churn
 (moves, leaves and joins, chat) and talkers while the files given by `--churn-file` and
 `--talk-file` exist.
 
 ```bash
 testenv/scale/up.sh
 mkdir -p /tmp/loadtest
-cargo run --release --example loadtest -- --users 1000 \
+cargo run --release --features tester --example loadtest -- --users 1000 \
   --churn-file /tmp/loadtest/churn --talk-file /tmp/loadtest/talk --cert-dir /tmp/loadtest/certs
 touch /tmp/loadtest/churn          # switch churn on; rm switches it off
 testenv/scale/down.sh

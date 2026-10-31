@@ -44,7 +44,7 @@ PIN=$(docker compose exec mumble-server sh -c \
 sed -i "s/REPLACE-WITH-THE-SERVER-CERTIFICATE-SHA256/$PIN/" bot.toml
 
 # 5. Register the bot once under its name and certificate: Mumcord only trusts a relay that a
-#    registered user announces. The scripted test bot does this with the same identity.
+#    registered user announces. `register` is part of the main image too.
 docker compose run --rm mumbot --host mumble-server --name RelayBot register
 
 # 6. Start the peer bot.
@@ -55,11 +55,34 @@ docker compose logs mumbot
 ## Checks
 
 - `docker compose logs mumpeer` shows `relay fingerprint (SHA-256): …`; the bot announces it.
-- `docker compose logs mumbot` shows `peer bot connected` and `peer: relay reachable`.
+- `docker compose logs mumbot` shows `bot connected` (with `modules=[Peer]`) and
+  `peer: relay reachable`.
 - Connect a Mumcord client to `127.0.0.1:64738`: its server info panel shows "Mumbot: Yes
   (RelayBot)" and "Mumpeer relay: Available". The packet inspector shows one `mumcord.peer`
   `relay` message from the bot.
 - An official Mumble client on the same server receives nothing from the bot.
+
+## Add the webhook module
+
+The same bot user can also post webhook messages: both modules then share one Mumble connection
+([docs/modules.md](../../docs/modules.md)).
+
+1. Add to `bot.toml`:
+   ```toml
+   [modules]
+   enabled = ["peer", "webhook"]
+
+   [http]
+   listen = "0.0.0.0:8080"
+
+   [[keys]]
+   key = "<openssl rand -hex 32>"
+   label = "alerts"
+   channels = ["Root"]
+   ```
+2. In `docker-compose.yml`, set the `mumbot` service's command to `["run"]`. The bot shares the
+   relay's network namespace, so publish `127.0.0.1:8080:8080` on the `mumpeer` service.
+3. `docker compose up -d mumbot`; the logs show `bot connected` with `modules=[Peer, Webhook]`.
 
 ## Clean up
 
