@@ -100,7 +100,9 @@ api_secret_file = "/run/secrets/mumbot_peer_api_secret"
 # api_fp = "<SHA-256 of the relay API certificate>"   # required for https
 ```
 
-Every key is described in [configuration.md](configuration.md#peer-the-peer-bot). There is no way
+A Docker Compose setup with server, relay and bot is in
+[`examples/peer-with-relay/`](../examples/peer-with-relay/). Every key is described in
+[configuration.md](configuration.md#peer-the-peer-bot). There is no way
 to announce a relay without the bot.
 
 ## Relay API

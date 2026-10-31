@@ -12,8 +12,10 @@ All notable changes to Mumbot are listed here. The format follows
   clients over plugin data (`mumcord.peer`), fetches pair tokens from the relay's API on request
   and tells the relay when someone leaves. Needs the new `[peer]` section and a pinned server
   certificate. See `docs/peer.md` (#8).
-- `server.server_cert_sha256`: pins the Mumble server certificate; any other certificate is
-  refused.
+- `server.server_cert_sha256` for the peer bot (required): pins the Mumble server certificate;
+  any other certificate is refused. The webhook bot rejects the key for now.
+- Docker Compose example `examples/peer-with-relay/` (Mumble server, mumpeer relay, peer bot);
+  the relay image is a placeholder until mumpeer is released.
 
 ## [0.1.1] - 2026-10-27
 

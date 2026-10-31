@@ -1,0 +1,77 @@
+# mumbot's peer bot plus a mumpeer relay and a standard Mumble server, for trying relay discovery
+# on one machine. Steps and checks: README.md next to this file.
+name: mumbot-peer-with-relay
+
+services:
+  mumble-server:
+    # The unmodified upstream server image, the same one mumbot's own tests run against.
+    image: mumblevoip/mumble-server:v1.5.735
+    restart: unless-stopped
+    environment:
+      MUMBLE_SUPERUSER_PASSWORD: ${SUPERUSER_PASSWORD:?copy .env.example to .env and set SUPERUSER_PASSWORD}
+      MUMBLE_CONFIG_SERVERPASSWORD: ${SERVER_PASSWORD:-}
+    ports:
+      - "127.0.0.1:${MUMBLE_PORT:-64738}:64738/tcp"
+      - "127.0.0.1:${MUMBLE_PORT:-64738}:64738/udp"
+    volumes:
+      - mumble-data:/data
+    healthcheck:
+      # Wait for a complete TLS handshake; an open port alone is not enough right after start.
+      test: ["CMD-SHELL", "openssl s_client -connect 127.0.0.1:64738 </dev/null >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  mumpeer:
+    # Placeholder until the first mumpeer release is published (Mumcord/mumpeer).
+    image: ${MUMPEER_IMAGE:-ghcr.io/mumcord/mumpeer:0.1.0}
+    # Placeholder until mumpeer's README names the real flags.
+    command: ["--config", "/config/mumpeer.toml"]
+    restart: unless-stopped
+    environment:
+      # Shared with the bot through .env, never written into a config file.
+      MUMPEER_API_SECRET: ${PEER_API_SECRET:?copy .env.example to .env and set PEER_API_SECRET}
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      # The relay itself: QUIC over UDP plus TLS over TCP, both on 443. Mumcord clients connect
+      # here; the address they use is public_host in mumpeer.toml.
+      - "${RELAY_BIND:-127.0.0.1}:443:443/udp"
+      - "${RELAY_BIND:-127.0.0.1}:443:443/tcp"
+    volumes:
+      - ./mumpeer.toml:/config/mumpeer.toml:ro
+      # The relay's key and self-signed certificate; clients pin its fingerprint.
+      - mumpeer-data:/var/lib/mumpeer
+
+  mumbot:
+    image: ghcr.io/mumcord/mumbot:0.1.0
+    command: ["peer"]
+    restart: unless-stopped
+    depends_on:
+      mumble-server:
+        condition: service_healthy
+      mumpeer:
+        condition: service_started
+    # Shares the relay's network namespace, so the relay API stays on loopback and plain HTTP
+    # never leaves the pair. The Mumble server is still reached by its service name.
+    network_mode: "service:mumpeer"
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      MUMBOT_CONFIG: /config/bot.toml
+      MUMBOT_PEER_API_SECRET: ${PEER_API_SECRET:?copy .env.example to .env and set PEER_API_SECRET}
+      SERVER_PASSWORD: ${SERVER_PASSWORD:-}
+      RUST_LOG: ${RUST_LOG:-info}
+    volumes:
+      - ./bot.toml:/config/bot.toml:ro
+      # The bot's client certificate: its identity, and the account it is registered with.
+      - mumbot-data:/data
+    # The image's check asks the webhook bot's /health; the peer bot has no HTTP listener.
+    healthcheck:
+      disable: true
+
+volumes:
+  mumble-data:
+  mumpeer-data:
+  mumbot-data:
