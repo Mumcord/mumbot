@@ -100,6 +100,13 @@ enum Command {
         #[arg(long, env = "MUMBOT_CONFIG")]
         config: PathBuf,
     },
+    /// Run the music module alone: an HTTP API that plays MP3s as voice into a channel, see
+    /// docs/music.md. Ignores the connection options above.
+    Music {
+        /// TOML config file with the server settings and the `[music]` section.
+        #[arg(long, env = "MUMBOT_CONFIG")]
+        config: PathBuf,
+    },
     /// Run several modules on one connection, see docs/modules.md. Ignores the connection
     /// options above.
     Run {
@@ -139,11 +146,12 @@ async fn main() -> Result<()> {
     let (config, chosen) = match cli.command {
         Command::Webhook { config } => (config, vec![Module::Webhook]),
         Command::Peer { config } => (config, vec![Module::Peer]),
+        Command::Music { config } => (config, vec![Module::Music]),
         Command::Run { config, modules } => (config, modules),
         #[cfg(feature = "tester")]
         Command::Test(command) => {
             let hold = Duration::from_secs(cli.hold);
-            let settings = voice_settings(&cli.voice, VoiceConfig::default())?;
+            let settings = voice_settings(&cli.voice, None, VoiceConfig::default())?;
             let bot = connect(cli.connection).await?;
             return cli::run_top_level(bot, command, hold, settings).await;
         }
@@ -166,19 +174,25 @@ async fn main() -> Result<()> {
         .init();
     let config = Arc::new(WebhookConfig::load(&config, &chosen)?);
     // Checked now so a bad value stops the start, not the first voice a module sends.
-    let settings = voice_settings(&cli.voice, config.voice)?;
+    let music = config.music.as_ref().map(|music| music.voice());
+    let settings = voice_settings(&cli.voice, music, config.voice)?;
     tracing::info!(
         bitrate_bps = settings.bitrate_bps,
         frame_ms = settings.frame_ms,
         "voice settings"
     );
-    modules::run(config).await
+    modules::run(config, settings).await
 }
 
-/// Command line, then environment, then the config's `[voice]` section, then the defaults.
-fn voice_settings(args: &VoiceArgs, voice: VoiceConfig) -> Result<VoiceSettings> {
+/// Command line, then environment, then the module's section, then the config's `[voice]`
+/// section, then the defaults.
+fn voice_settings(
+    args: &VoiceArgs,
+    module: Option<VoiceConfig>,
+    voice: VoiceConfig,
+) -> Result<VoiceSettings> {
     let env = VoiceConfig::from_env(|name| std::env::var(name).ok())?;
-    VoiceSettings::resolve(args.layer(), env, None, voice)
+    VoiceSettings::resolve(args.layer(), env, module, voice)
 }
 
 async fn connect(cli: Connection) -> Result<Bot> {
@@ -215,17 +229,24 @@ mod tests {
         for args in [
             &["webhook", "--config", "bot.toml"][..],
             &["peer", "--config", "bot.toml"],
+            &["music", "--config", "bot.toml"],
             &["run", "--config", "bot.toml"],
         ] {
             assert!(parse(args).is_ok(), "{args:?}");
         }
-        let cli = parse(&["run", "--config", "bot.toml", "--modules", "webhook,peer"])
-            .expect("run with modules");
+        let cli = parse(&[
+            "run",
+            "--config",
+            "bot.toml",
+            "--modules",
+            "webhook,peer,music",
+        ])
+        .expect("run with modules");
         assert!(matches!(
             cli.command,
-            Command::Run { modules, .. } if modules == [Module::Webhook, Module::Peer]
+            Command::Run { modules, .. } if modules == [Module::Webhook, Module::Peer, Module::Music]
         ));
-        assert!(parse(&["run", "--config", "bot.toml", "--modules", "music"]).is_err());
+        assert!(parse(&["run", "--config", "bot.toml", "--modules", "radio"]).is_err());
     }
 
     #[cfg(not(feature = "tester"))]

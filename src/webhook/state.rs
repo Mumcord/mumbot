@@ -72,6 +72,15 @@ impl BotApi {
         &self.config
     }
 
+    /// The live command handle, if the bot is connected right now.
+    pub async fn current_handle(&self) -> Option<Handle> {
+        let guard = self.bot.lock().await;
+        guard
+            .as_ref()
+            .map(|bot| bot.handle().clone())
+            .filter(Handle::is_connected)
+    }
+
     /// Clone of the live command handle, so a test can force a reconnect.
     pub async fn handle(&self) -> Handle {
         let guard = self.bot.lock().await;

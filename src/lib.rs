@@ -2,7 +2,7 @@
 //! work against any unmodified standard Mumble server.
 //!
 //! [`Bot`] is the shared core (connect, persistent certificate, waiting on server state). Built on
-//! it: the production [`modules`] ([`webhook`] and [`peer`]) that share one connection, and, with
+//! it: the production [`modules`] ([`webhook`], [`peer`] and [`music`]) that share one connection, and, with
 //! the `tester` feature, the scripted test bot behind the `mumbot` CLI subcommands (chat, state,
 //! ACL helpers, `expect` checks) with voice in `voice`, used by Mumcord's E2E and smoke tests.
 
@@ -13,11 +13,13 @@ pub mod cert;
 pub mod checks;
 pub mod env;
 pub mod modules;
+pub mod music;
 pub mod peer;
 #[cfg(feature = "tester")]
 pub mod samples;
 #[cfg(feature = "tester")]
 pub mod voice;
+pub mod voice_out;
 pub mod voice_settings;
 pub mod webhook;
 

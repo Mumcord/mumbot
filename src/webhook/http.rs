@@ -49,7 +49,7 @@ pub struct Response {
 }
 
 impl Response {
-    fn ok(status: u16, json: impl Into<String>) -> Self {
+    pub(crate) fn ok(status: u16, json: impl Into<String>) -> Self {
         Self {
             status,
             json: Some(json.into()),
@@ -59,13 +59,13 @@ impl Response {
     }
 
     /// Fills in what the request log needs (FR-1.20).
-    fn audit(mut self, key: Option<&ApiKey>, channel: Option<u32>) -> Self {
+    pub(crate) fn audit(mut self, key: Option<&ApiKey>, channel: Option<u32>) -> Self {
         self.key = key.map(|entry| entry.label.clone());
         self.channel = channel;
         self
     }
 
-    fn error(status: u16, reason: &str) -> Self {
+    pub(crate) fn error(status: u16, reason: &str) -> Self {
         Self::ok(status, format!("{{\"error\":{}}}", quote(reason)))
     }
 
@@ -346,6 +346,12 @@ pub async fn serve<A: Api + Send + Sync + 'static>(
 }
 
 async fn read_request(socket: &mut tokio::net::TcpStream) -> Result<Request> {
+    let request = read_head(socket).await?;
+    read_body(socket, request, MAX_BODY_BYTES).await
+}
+
+/// Reads the request line and headers; `body` holds what arrived with them.
+pub(crate) async fn read_head(socket: &mut tokio::net::TcpStream) -> Result<Request> {
     let mut buffer = Vec::new();
     let mut chunk = [0u8; 4096];
     while split_at(&buffer, b"\r\n\r\n").is_none() {
@@ -364,20 +370,29 @@ async fn read_request(socket: &mut tokio::net::TcpStream) -> Result<Request> {
         .unwrap_or("0")
         .parse()
         .unwrap_or(0);
-    // Read the body, but never more than the cap.
+    Ok(Request {
+        declared_len: length,
+        ..request
+    })
+}
+
+/// Reads the rest of the body, but never more than `max_body` bytes.
+pub(crate) async fn read_body(
+    socket: &mut tokio::net::TcpStream,
+    request: Request,
+    max_body: usize,
+) -> Result<Request> {
+    let mut chunk = [0u8; 4096];
     let mut body = request.body;
-    while body.len() < length.min(MAX_BODY_BYTES) {
+    while body.len() < request.declared_len.min(max_body) {
         let read = socket.read(&mut chunk).await?;
         if read == 0 {
             break;
         }
         body.extend_from_slice(&chunk[..read]);
     }
-    Ok(Request {
-        declared_len: length,
-        body,
-        ..request
-    })
+    body.truncate(max_body);
+    Ok(Request { body, ..request })
 }
 
 #[cfg(test)]

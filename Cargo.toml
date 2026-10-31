@@ -1,6 +1,6 @@
 [package]
 name = "mumbot"
-description = "Headless Mumble bots for standard Mumble servers: webhook and peer modules, plus a scripted test bot in the tester build"
+description = "Headless Mumble bots for standard Mumble servers: webhook, peer and music modules, plus a scripted test bot in the tester build"
 version = "0.1.1"
 edition = "2024"
 rust-version = "1.90"
@@ -11,10 +11,10 @@ publish = false
 [dependencies]
 # Published by the Mumcord client project; a minor bump (by hand or Dependabot) must pass the
 # live tests. mumcord-codec (Opus without device I/O, so static builds need no ALSA) gives the
-# test bot's voice the same codec settings as the client.
+# bots' voice the same codec settings as the client.
 mumcord-protocol = "0.4"
-mumcord-codec = { version = "0.4", optional = true }
-bytes = { version = "1", optional = true }
+mumcord-codec = "0.4"
+bytes = "1"
 hound = { version = "3.5", optional = true }
 tokio = { version = "1.54", features = ["full"] }
 anyhow = "1"
@@ -30,11 +30,17 @@ serde_json = "1"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 ring = "0.17"
+# Music module: pure-Rust MP3 decoding (MPL-2.0) that builds statically everywhere, a real-time
+# safe ring buffer between the decode thread and the voice sender, and Mozilla's root store for
+# https sources (the Alpine image has no reliable system store).
+symphonia = { version = "0.5", default-features = false, features = ["mp3"] }
+rtrb = "0.4"
+webpki-roots = "1"
 
 [features]
 # The scripted test bot (test subcommands, voice, samples, checks, load generator). Off by
 # default, so the main build carries no test code; the `mumbot-tester` release enables it.
-tester = ["dep:mumcord-codec", "dep:hound", "dep:bytes"]
+tester = ["dep:hound"]
 
 [dev-dependencies]
 bytes = "1"

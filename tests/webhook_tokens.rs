@@ -79,6 +79,7 @@ fn config(
         },
         peer: None,
         voice: Default::default(),
+        music: None,
     })
 }
 
