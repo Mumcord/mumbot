@@ -31,17 +31,17 @@ config change, no protocol extension.
 | **Test bot** | A scripted second participant for automated tests: chat, user state, admin steps, `expect` checks, voice play/record/level checks. Exit code 0 = passed. | Available in the tester build |
 | **Load test** | Fills a local server with up to 1000 users, with churn, chat and talkers. | Available in the tester build (source only) |
 | Music | Plays an MP3 (or a URL) sent over HTTP as voice into a channel. | Coming: [#3](https://github.com/Mumcord/mumbot/issues/3) |
-| History | Stays online, records the chat it can see and hands the history to Mumcord clients that were offline. | Coming: [#2](https://github.com/Mumcord/mumbot/issues/2) |
+| **History** | Stays online, records the chat of the channels you choose and hands it to Mumcord clients that were offline (history sync). | Available |
 
-Run one module with `mumbot webhook` or `mumbot peer`, or several on one connection (one bot
-user) with `mumbot run --modules webhook,peer` or a `[modules]` list in the config; see
+Run one module with `mumbot webhook`, `mumbot peer` or `mumbot history`, or several on one
+connection (one bot user) with `mumbot run --modules webhook,peer,history` or a `[modules]` list in the config; see
 [docs/modules.md](docs/modules.md).
 
 ### Two builds
 
 | Build | Contains | Archive | Docker image |
 | --- | --- | --- | --- |
-| **mumbot** | The production modules (webhook, peer). No test code. | `mumbot-<version>-<platform>` | `ghcr.io/mumcord/mumbot` |
+| **mumbot** | The production modules (webhook, peer, history). No test code. | `mumbot-<version>-<platform>` | `ghcr.io/mumcord/mumbot` |
 | **mumbot-tester** | The same plus the scripted test bot (checks, voice, samples), for testing Mumble servers and clients in CI. | `mumbot-tester-<version>-<platform>` | `ghcr.io/mumcord/mumbot-tester` |
 
 Both binaries are called `mumbot`. The main build answers a test command with a pointer to the
@@ -135,6 +135,7 @@ target/release/mumbot --help
 | [Modules](docs/modules.md) | Run one module or several on one connection; the two builds. |
 | [Webhook bot](docs/webhook.md) | What it does, how to run it, the bot's identity. |
 | [Peer bot](docs/peer.md) | Announce a mumpeer relay to Mumcord clients. |
+| [History bot](docs/history.md) | Record channel chat for Mumcord clients that were offline. |
 | [Configuration](docs/configuration.md) | Every `bot.toml` key, default and environment variable. |
 | [CLI](docs/cli.md) | Every command and flag, test-bot scripts, voice checks, load test. |
 | [HTTP API](docs/http-api.md) | Endpoints, authentication, errors, curl examples. |
@@ -148,6 +149,7 @@ target/release/mumbot --help
 | [`webhook/`](examples/webhook/) | Run the webhook bot against the Mumble server you already have. |
 | [`webhook-with-server/`](examples/webhook-with-server/) | Try everything on one machine: bot plus a standard Mumble server. |
 | [`peer-with-relay/`](examples/peer-with-relay/) | Try the peer bot with a mumpeer relay and a standard Mumble server. |
+| [`history/`](examples/history/) | Run the history bot against the Mumble server you already have. |
 | [`ci-test-bot/`](examples/ci-test-bot/) | Test a Mumble client in CI against a throwaway server (tester image). |
 
 ## Test bot at a glance

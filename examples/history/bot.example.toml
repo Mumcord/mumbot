@@ -1,0 +1,27 @@
+# Copy to bot.toml (git-ignored) and set your server. Placeholders only.
+# Every key: docs/configuration.md. What is stored: docs/history.md.
+
+[server]
+# Your Mumble server (1.4 or newer). Use "host.docker.internal" if it runs on this machine.
+host = "mumble.example.org"
+port = 64738
+# The user name people see; make the purpose obvious.
+name = "History"
+# Certificate name; keep it stable so the bot keeps its identity (no spaces).
+# cert_name = "History"
+# Channel the bot sits in. It listens to the other recorded channels from there.
+channel = "Lobby"
+# The connect password comes from SERVER_PASSWORD in .env; do not repeat it here.
+
+[history]
+# Channels to record: names, Root/Paths or channel ids. ["*"] records every channel.
+# Nothing is recorded that is not listed; private messages never are.
+channels = ["Lobby"]
+# Channels never recorded, even with "*".
+# exclude = ["AFK"]
+# How long messages are kept: 1 to 7 days (history sync never asks for more).
+retention_days = 7
+# Newest messages kept per channel.
+max_messages_per_channel = 5000
+# The database lives in the data volume next to the bot's certificate.
+database = "/data/history.sqlite3"

@@ -62,6 +62,15 @@ Runs until stopped, reconnects after a dropped link and exits non-zero only when
 API secret is invalid or the very first login fails (also when the server certificate does not
 match the pin).
 
+## `history`
+
+| Usage | Option | Meaning |
+| --- | --- | --- |
+| `mumbot history --config <CONFIG>` | `--config <CONFIG>` (env `MUMBOT_CONFIG`) | TOML config file with the server settings and the `[history]` section ([configuration.md](configuration.md#history-the-history-bot)). |
+
+Runs until stopped, reconnects after a dropped link and exits non-zero only when the config is
+invalid, the database cannot be opened or the very first login fails. See [history.md](history.md).
+
 ## `run`
 
 | Usage | Option | Meaning |

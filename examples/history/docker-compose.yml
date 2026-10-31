@@ -1,0 +1,34 @@
+# mumbot's history bot against a Mumble server you already run (any standard server, 1.4+).
+# Steps and checks: README.md next to this file.
+name: mumbot-history
+
+services:
+  mumbot:
+    image: ghcr.io/mumcord/mumbot:0.1.0
+    command: ["history"]
+    # The bot reconnects by itself after a dropped link; this restarts it after a crash, a
+    # reboot or a failed first login (for example while the server is still starting).
+    restart: unless-stopped
+    # The image's own non-root user; repeated here so the setup does not depend on the image.
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      MUMBOT_CONFIG: /config/bot.toml
+      # Connect password of the server, if it has one (kept out of bot.toml).
+      SERVER_PASSWORD: ${SERVER_PASSWORD:-}
+      RUST_LOG: ${RUST_LOG:-info}
+    # Lets bot.toml use host = "host.docker.internal" when the server runs on this machine.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./bot.toml:/config/bot.toml:ro
+      # The bot's client certificate (its identity) and the recorded history. Keep it private.
+      - mumbot-data:/data
+    healthcheck:
+      # The image's check asks the webhook module's /health; the history module has no listener.
+      disable: true
+
+volumes:
+  mumbot-data:

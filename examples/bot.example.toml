@@ -28,3 +28,12 @@ channels = ["Lobby"]
 # api_url = "http://127.0.0.1:7480"
 # api_secret_file = "/run/secrets/mumbot_peer_api_secret"
 # api_fp = "SHA-256 OF THE RELAY API CERTIFICATE, REQUIRED FOR HTTPS"
+
+# Only for `mumbot history` (channel history for Mumcord clients, docs/history.md). Nothing is
+# recorded that is not listed; private messages and voice never are.
+# [history]
+# channels = ["Lobby"]
+# exclude = ["AFK"]
+# retention_days = 7
+# max_messages_per_channel = 5000
+# database = "history.sqlite3"
