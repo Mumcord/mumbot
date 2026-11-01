@@ -4,6 +4,13 @@ All notable changes to Mumbot are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.1] - 2026-11-01
+
+### Changed
+
+- Updated the Mumcord crates to 0.5.
+- The peer module uses the shared `mumcord.peer` types from `mumcord-p2p` instead of its own copies.
+
 ## [0.4.0] - 2026-11-01
 
 ### Added

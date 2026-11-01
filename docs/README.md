@@ -33,7 +33,7 @@ certificate.
 | [`music/`](../examples/music/) | The music bot against a Mumble server you already run, with a read-only media folder. | Available |
 | [`history/`](../examples/history/) | The history bot against a Mumble server you already run, with its database on a volume. | Available |
 
-The examples use the pinned image `ghcr.io/mumcord/mumbot:0.4.0`; `ci-test-bot` uses the tester
+The examples use the pinned image `ghcr.io/mumcord/mumbot:0.4.1`; `ci-test-bot` uses the tester
 image `ghcr.io/mumcord/mumbot-tester` ([modules.md](modules.md#the-two-builds)). When you upgrade,
 change the tag in `docker-compose.yml` and read the [changelog](../CHANGELOG.md) first.
 
@@ -44,7 +44,7 @@ CI checks the examples on every pull request that touches them, the image or the
 
 - `docker compose config` validates every example's `docker-compose.yml` with its `.env.example`.
 - `webhook-with-server` is started from the image built from the pull request (tagged locally as
-  `ghcr.io/mumcord/mumbot:0.4.0`), must report itself healthy and connected on `/health`, and
+  `ghcr.io/mumcord/mumbot:0.4.1`), must report itself healthy and connected on `/health`, and
   must answer `{"delivered":true}` to a `POST /message`.
 
 Files in `examples/<name>/` only trigger that job, and `examples/*.md` triggers nothing.
