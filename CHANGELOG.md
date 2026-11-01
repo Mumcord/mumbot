@@ -4,6 +4,14 @@ All notable changes to Mumbot are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Music bot: announces the official Mumbot Music plugin (`mumbot-music@1`) to Mumcord clients
+  whose hello lists `plugins`, as plugin data `mumcord.plugins`, at most once every 10 seconds
+  per client, so the plugin can offer "Configure bot" on it. See `docs/music.md`.
+
 ## [0.3.0] - 2026-11-01
 
 ### Added

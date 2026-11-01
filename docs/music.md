@@ -166,6 +166,22 @@ The bot needs "Enter" and "Speak" in the channels it plays into. Without "Enter"
 with a log line; without "Speak" the server drops the voice silently. A server that suppresses or
 mutes the bot (for example in a channel where only registered users may speak) does the same.
 
+## Mumcord's Mumbot Music plugin
+
+Mumcord users can control the bot from inside the client with the official Mumbot Music plugin.
+So that the plugin knows which user on the server is a music bot, the module announces the
+plugin to Mumcord clients:
+
+- When a Mumcord client says hello to the bot (when it joins, or when the bot joins) and the
+  hello lists the feature `plugins`, the bot sends plugin data `mumcord.plugins` with
+  `{"v":1,"p":["mumbot-music@1"]}` to that client only. The entry has no source suffix, which
+  marks it as an official plugin (Mumcord spec 06, FR-6.35).
+- At most once every 10 seconds per client; a client that greets again sooner gets the announce
+  when the 10 seconds are over. Answers to several clients go out together, once a second.
+- The bot never sends a hello itself and receives nothing back. Official Mumble clients and
+  Mumcord versions without plugins get nothing. Nothing is needed on the server beyond plugin
+  data (Mumble 1.4 or newer); there is nothing to configure.
+
 ## Security notes
 
 - Music keys are separate from the webhook's `[[keys]]`: a webhook key cannot play audio.
