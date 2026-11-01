@@ -124,7 +124,6 @@ pub async fn run(config: Arc<WebhookConfig>, music_voice: VoiceSettings) -> Resu
     let events = api.subscribe();
     let history_events = api.subscribe();
     let plugins_events = api.subscribe();
-    let music_events = api.subscribe();
     api.connect().await?;
     tracing::info!(name = %config.server.name, modules = ?enabled, "bot connected");
 
@@ -148,7 +147,6 @@ pub async fn run(config: Arc<WebhookConfig>, music_voice: VoiceSettings) -> Resu
                 tokio::select! {
                     result = music::serve(listener, music, server, Arc::clone(&api), Arc::clone(&player)) => result,
                     result = music::run(player, Arc::clone(&api), Arc::clone(&config), music_voice) => result,
-                    result = music::announce::run(Arc::clone(&api), music_events) => result,
                 }
             }
             None => pending().await,
