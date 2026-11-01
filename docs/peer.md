@@ -26,8 +26,13 @@ same config section.
   out tokens on a server it did not mean to join. Get the value on the server host with
   `openssl x509 -in <server cert> -noout -fingerprint -sha256`.
 - **The API secret** of your mumpeer relay: at least 32 characters (for example
-  `openssl rand -hex 32`), in a file only the bot can read (`chmod 600`) or in the environment
-  variable `MUMBOT_PEER_API_SECRET`. Never put it into `bot.toml` or Git.
+  `openssl rand -hex 32`), no control characters, in a file only the bot can read (`chmod 600`)
+  or in the environment variable `MUMBOT_PEER_API_SECRET`. A secret file that group or others
+  can read stops the bot at start; in Docker, where mounted secrets are often readable by
+  everyone in the container, use the environment variable. Never put it into `bot.toml` or Git.
+- **Decide who may use the relay** (see [Who gets tokens](#who-gets-tokens)). By default every
+  registered user; with `allowed_groups` only members of those groups, which needs the "Write
+  ACL" permission for the bot.
 
 ## How it works
 
@@ -59,8 +64,8 @@ official Mumble clients ignore. Each message is compact JSON of at most 1000 byt
    ```
 
    The requester is the session the server stamped on the message, never a field of it. Both must
-   be online with a certificate, both must have sent a hello with `p2p`, and they must be
-   different users. The bot then asks the relay for a token for the two certificate hashes and
+   be online with a certificate, both must have sent a hello with `p2p`, both must be allowed to
+   use the relay ([Who gets tokens](#who-gets-tokens)), and they must be different users. The bot then asks the relay for a token for the two certificate hashes and
    sends it to both in one message:
 
    ```json
@@ -71,17 +76,67 @@ official Mumble clients ignore. Each message is compact JSON of at most 1000 byt
 
    | `r` | Why |
    | --- | --- |
-   | `denied` | The requester has no certificate or sent no `p2p` hello, or asked for itself, the bot, a peer without certificate or a second session of the same identity. |
+   | `denied` | The requester has no certificate or sent no `p2p` hello, or asked for itself, the bot, a peer without certificate or a second session of the same identity; or the requester or the peer may not use the relay (a guest, or not in `allowed_groups`). The bot's debug log tells these apart; the client only knows this list of reasons. |
    | `peer-gone` | The peer is not on the server. |
    | `peer-not-mumcord` | The peer sent no hello with `p2p`. |
-   | `rate-limited` | More than 6 requests from this session in a minute, or the relay asked the bot to slow down. |
+   | `rate-limited` | More than 6 requests from this session in a minute, more than `cert_requests_per_minute` (10) from all sessions with this certificate in a minute, more than `max_pairs_per_cert` (4) open pairs with this certificate, or the relay asked the bot to slow down. |
    | `relay-down` | The relay is down or did not answer. |
    | `relay-full` | The relay has no room for another session. |
 
    A request without a valid `rid` (16 lowercase hex digits) is ignored.
 
-3. **Leaving.** When a remembered client leaves the server or its certificate changes, the bot
-   tells the relay to drop that certificate hash; the relay closes its sessions.
+3. **Leaving.** When the last remembered session with a certificate leaves the server or changes
+   certificate, the bot tells the relay to drop that certificate hash; the relay closes its
+   sessions and pairs. A second device with the same certificate keeps its relay session while
+   the other one leaves. A user who loses access (removed from an allowed group) is dropped the
+   same way as soon as the bot reads the groups again.
+
+## Who gets tokens
+
+The relay carries traffic between the two users of a pair, so the bot only hands out tokens to
+people the server knows. Both users of a pair must be allowed.
+
+- **Default: registered users.** Unregistered guests never get a token, also not as the peer of
+  someone else's request; they get `denied`. Certificates are free to create, a registration is
+  not.
+- **`allowed_groups`: only members of these Mumble groups.** The bot reads the groups from the
+  server's ACL on the root channel (or on `groups_channel`). Groups only hold registered users,
+  so guests stay out here too. Reading an ACL needs the **"Write ACL"** permission on that
+  channel: the Mumble server answers an ACL query only to users who may edit it. When groups are
+  configured and the bot cannot read them, it refuses to start; if reading fails later, nobody
+  gets a token until it works again. The server never tells clients about changed group members,
+  so the bot reads the groups again for every token request and once a minute; someone removed
+  from a group loses open relay sessions within a minute.
+
+Per certificate, the bot also allows at most `cert_requests_per_minute` (default 10) token
+requests per minute across all sessions, and at most `max_pairs_per_cert` (default 4, the relay's
+default sessions per certificate) open pairs. A pair stays open until one of its two
+certificates is dropped; a new token for the same two users replaces the old one and does not
+count twice. A reconnect gets a new session but not a new budget.
+
+### Example: a `relay-users` group
+
+Everything happens in the normal admin UI of the Mumble client, logged in as `SuperUser` or an
+admin; nothing on the server is changed beyond its usual ACL configuration.
+
+1. Register the bot and every person who should use the relay (Self → Register).
+2. Create a channel just for this, for example `Relay` under Root, so the bot's "Write ACL"
+   permission covers only that channel and not the whole server.
+3. Right-click `Relay` → Edit → **Groups**: add the group `relay-users` and add the registered
+   people as members.
+4. Same dialog, **ACL** tab: add an entry for the bot's user (type its registered name), tick
+   "Applies to this channel", and grant **Write ACL**. Apply.
+5. In `bot.toml`:
+
+   ```toml
+   [peer]
+   allowed_groups = ["relay-users"]
+   groups_channel = "Relay"
+   ```
+
+Adding members later in the same dialog takes effect with the next token request; removing them
+within a minute. Protect the
+bot's certificate: with "Write ACL" it can change that channel's ACL.
 
 The bot sends nothing to official clients and stays far below the server's plugin data rate
 limit: one message per new Mumcord client, one per token request, one per relay change.
@@ -114,12 +169,13 @@ times out after 5 seconds.
 | --- | --- | --- |
 | `GET /v1/status` | `200 {"boot_id","host","udp","tcp","fp",…}` | Every 30 seconds; the first check right at start. A new `boot_id` means the relay restarted. |
 | `POST /v1/pairs` with `{"a":"<cert hash>","b":"<cert hash>"}` | `201 {"tok","expires_in"}`, `503` relay full, `429` rate limited | For every accepted token request. |
-| `DELETE /v1/peers/{cert hash}` | `204` | When a remembered client leaves or changes certificate. |
+| `DELETE /v1/peers/{cert hash}` | `204` | When the last remembered session with that certificate leaves or changes certificate, or loses access. |
 
 Over `https` the relay's self-signed certificate is pinned with `api_fp` instead of being checked
 against certificate authorities; TLS 1.3 only. Plain `http` is meant for a relay on the same host
-or in the same container network; any other host over plain HTTP logs a warning at start, because
-the secret then travels in clear text.
+(loopback); any other host over plain HTTP stops the bot at start, because the secret would
+travel in clear text. `allow_insecure_http = true` allows it anyway (for example inside a private
+container network) and logs a warning.
 
 ## Logs
 
