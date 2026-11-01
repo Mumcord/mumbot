@@ -144,9 +144,14 @@ struct Hello {
 
 /// Whether the payload is a Mumcord hello (any version from 1 up) that lists `p2p`.
 pub fn is_p2p_hello(data: &[u8]) -> bool {
+    hello_lists(data, P2P_FEATURE)
+}
+
+/// Whether the payload is a Mumcord hello (any version from 1 up) that lists `feature`.
+pub fn hello_lists(data: &[u8], feature: &str) -> bool {
     data.len() <= mumcord_protocol::PLUGIN_DATA_MAX
         && serde_json::from_slice::<Hello>(data).is_ok_and(|h| {
-            h.app == "mumcord" && h.v >= 1 && h.features.iter().any(|f| f == P2P_FEATURE)
+            h.app == "mumcord" && h.v >= 1 && h.features.iter().any(|f| f == feature)
         })
 }
 

@@ -75,6 +75,7 @@ fn history_config(dir: &Path, name: &str) -> Arc<WebhookConfig> {
             max_messages_per_channel: 100,
             database: Some(dir.join("history.sqlite3")),
         }),
+        plugins: None,
         voice: Default::default(),
     })
 }

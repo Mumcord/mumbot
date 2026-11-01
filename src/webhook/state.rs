@@ -11,6 +11,7 @@ use crate::bot::BROADCAST_CAPACITY;
 use crate::checks::resolve_channel;
 use crate::history::{self, HistoryLink};
 use crate::peer::{Link, Users};
+use crate::plugins;
 use crate::webhook::MAX_MESSAGE_CHARS;
 use crate::webhook::config::{ApiKey, ChannelRef, WebhookConfig};
 use crate::webhook::http::{Api, DeliveryError};
@@ -265,6 +266,25 @@ impl HistoryLink for Arc<BotApi> {
             .ok_or_else(|| anyhow::anyhow!("bot is not connected"))?;
         bot.handle()
             .send_plugin_data(receivers, history::wire::DATA_ID, data)?;
+        Ok(())
+    }
+}
+
+/// The plugins module's view of the bot (`src/plugins/`).
+impl plugins::Link for Arc<BotApi> {
+    async fn registered(&self) -> Option<bool> {
+        let guard = self.bot.lock().await;
+        let bot = guard.as_ref().filter(|bot| bot.handle().is_connected())?;
+        Some(bot.own_user().ok()?.user_id.is_some())
+    }
+
+    async fn send(&self, receivers: &[u32], data: Vec<u8>) -> Result<()> {
+        let guard = self.bot.lock().await;
+        let bot = guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("bot is not connected"))?;
+        bot.handle()
+            .send_plugin_data(receivers, plugins::wire::DATA_ID, data)?;
         Ok(())
     }
 }

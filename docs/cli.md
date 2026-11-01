@@ -81,12 +81,21 @@ non-zero only when the config is invalid, the listener cannot bind or the very f
 Runs until stopped, reconnects after a dropped link and exits non-zero only when the config is
 invalid, the database cannot be opened or the very first login fails. See [history.md](history.md).
 
+## `plugins`
+
+| Usage | Option | Meaning |
+| --- | --- | --- |
+| `mumbot plugins --config <CONFIG>` | `--config <CONFIG>` (env `MUMBOT_CONFIG`) | TOML config file with the server settings and the `[plugins]` section ([configuration.md](configuration.md#plugins-the-plugins-bot)). |
+
+Runs until stopped and reconnects after a dropped link. Exits non-zero when the config is
+invalid, the bot user is not registered or the very first login fails. See [plugins.md](plugins.md).
+
 ## `run`
 
 | Usage | Option | Meaning |
 | --- | --- | --- |
 | `mumbot run --config <CONFIG> [--modules <MODULES>]` | `--config <CONFIG>` (env `MUMBOT_CONFIG`) | TOML config file with the server settings and the sections of the chosen modules. |
-| | `--modules <MODULES>` (env `MUMBOT_MODULES`) | Comma-separated modules (`webhook`, `peer`, `music`); replaces `[modules] enabled` of the config. |
+| | `--modules <MODULES>` (env `MUMBOT_MODULES`) | Comma-separated modules (`webhook`, `peer`, `history`, `music`, `plugins`); replaces `[modules] enabled` of the config. |
 
 Logs in once and runs every chosen module on that connection. Runs until stopped, reconnects
 after a dropped link and exits non-zero when no module is chosen, the config is invalid for the

@@ -11,6 +11,7 @@ folder is the reference; the [README](../README.md) has the quick start.
 | [Webhook bot](webhook.md) | What the webhook bot does, how to run it, the bot's identity. |
 | [Peer bot](peer.md) | Relay discovery for Mumcord clients (`mumbot peer`): announcement, tokens, the relay API. |
 | [Music bot](music.md) | Play MP3s into a channel (`mumbot music`): endpoints, sources, URL allowlist, limits. |
+| [Plugins bot](plugins.md) | Mumcord plugin suggestions for everyone who joins (`mumbot plugins`): what is announced, how often, what the bot learns. |
 | [History bot](history.md) | Channel history for Mumcord clients that were offline (`mumbot history`): what is stored, for how long, who gets it. |
 | [Configuration](configuration.md) | Every `bot.toml` key with its default and environment variable. |
 | [CLI](cli.md) | Every command and flag of `mumbot`, plus the load test. |

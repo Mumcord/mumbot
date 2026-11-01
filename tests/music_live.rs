@@ -88,6 +88,7 @@ fn config(
         tokens: Vec::new(),
         peer: None,
         history: None,
+        plugins: None,
         voice: Default::default(),
         music: Some(music),
     }
