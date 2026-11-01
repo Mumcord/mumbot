@@ -7,7 +7,7 @@ channel. Ideal for trying the bot out on your own machine before you point it at
 | Service | Image | Reachable at |
 | --- | --- | --- |
 | `mumble-server` | `mumblevoip/mumble-server:v1.5.735` (unmodified upstream image) | `127.0.0.1:64738` (Mumble client) |
-| `mumbot` | `ghcr.io/mumcord/mumbot:0.4.0` | `http://127.0.0.1:8080` (HTTP API) |
+| `mumbot` | `ghcr.io/mumcord/mumbot:0.4.1` | `http://127.0.0.1:8080` (HTTP API) |
 
 ## Prerequisites
 

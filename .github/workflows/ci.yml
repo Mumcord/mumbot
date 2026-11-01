@@ -210,7 +210,7 @@ jobs:
           load: true
           # The examples pin the released tag; this local tag makes them run this change's image
           # instead (Compose only pulls an image that is missing).
-          tags: ghcr.io/mumcord/mumbot:0.4.0
+          tags: ghcr.io/mumcord/mumbot:0.4.1
           cache-from: type=gha,scope=mumbot
 
       - name: Smoke test webhook-with-server
