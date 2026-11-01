@@ -3,7 +3,8 @@
 //!
 //! Checks the acceptance criteria of `specs/05-music-specification.md` in the running bot:
 //! AC-4.1 a played file is heard by another user, AC-4.2 queue, skip and stop, AC-4.3 refused
-//! requests, AC-4.4 music and webhook on one connection, AC-4.5 the configured bitrate.
+//! requests, AC-4.4 music and webhook on one connection, AC-4.5 the configured bitrate; and the
+//! plugin announce `mumbot-music@1` to Mumcord clients whose hello lists `plugins` (task M2b).
 
 #![cfg(feature = "tester")]
 
@@ -13,11 +14,13 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use mumbot::music::MusicConfig;
+use mumbot::protocol::Event;
 use mumbot::voice::BotVoice;
 use mumbot::voice_settings::VoiceSettings;
 use mumbot::webhook::{ApiKey, ChannelRef, HttpConfig, ModulesConfig, ServerConfig, WebhookConfig};
 use mumbot::{Bot, BotConfig, Module, UserCheck, env, modules};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::broadcast;
 
 const KEY: &str = "test-key-music";
 /// Lower than the 96 kbit/s default, so the packet sizes show the setting reached the wire.
@@ -246,4 +249,92 @@ async fn music_is_heard_and_controlled_over_http() -> Result<()> {
 
     running.abort();
     listener.disconnect().await
+}
+
+/// The next `mumcord.plugins` message from `from` within `wait`, as JSON.
+async fn next_announce(
+    events: &mut broadcast::Receiver<Event>,
+    from: u32,
+    wait: Duration,
+) -> Option<serde_json::Value> {
+    tokio::time::timeout(wait, async {
+        loop {
+            if let Ok(Event::PluginData(data)) = events.recv().await
+                && data.sender == Some(from)
+                && data.data_id == "mumcord.plugins"
+            {
+                return serde_json::from_slice(&data.data).expect("json");
+            }
+        }
+    })
+    .await
+    .ok()
+}
+
+#[tokio::test]
+#[ignore = "needs testenv and MUMBOT_LIVE=1"]
+async fn the_music_bot_announces_its_plugin_to_mumcord_clients() -> Result<()> {
+    if !live() {
+        return Ok(());
+    }
+    let dir = tempfile::tempdir()?;
+    let media = tempfile::tempdir()?;
+    let (music_name, alice_name, old_name) =
+        (unique("music"), unique("alice"), unique("oldmumcord"));
+    let config = config(
+        dir.path(),
+        media.path(),
+        &music_name,
+        free_port(),
+        free_port(),
+    );
+    let running = tokio::spawn(modules::run(Arc::new(config), VoiceSettings::default()));
+
+    let client = |name: &str| BotConfig {
+        data_dir: Some(dir.path().to_owned()),
+        ..BotConfig::new(name, env::test_port())
+    };
+    let alice = Bot::connect(client(&alice_name)).await?;
+    let old = Bot::connect(client(&old_name)).await?;
+    alice.wait_user(&music_name, &UserCheck::default()).await?;
+    let bot = alice
+        .state()
+        .users
+        .values()
+        .find(|u| u.name == music_name)
+        .map(|u| u.session)
+        .expect("music bot is online");
+    let (mut alice_events, mut old_events) = (alice.subscribe(), old.subscribe());
+    let hello = |features: &str| {
+        format!(r#"{{"app":"mumcord","v":1,"features":[{features}]}}"#).into_bytes()
+    };
+    alice
+        .handle()
+        .send_plugin_data(&[bot], "mumcord.hello", hello(r#""p2p","plugins""#))?;
+    old.handle()
+        .send_plugin_data(&[bot], "mumcord.hello", hello(r#""p2p""#))?;
+
+    let wait = Duration::from_secs(5);
+    assert_eq!(
+        next_announce(&mut alice_events, bot, wait).await,
+        Some(serde_json::json!({"v": 1, "p": ["mumbot-music@1"]})),
+        "official entry, no source suffix"
+    );
+    let announced = Instant::now();
+    assert_eq!(next_announce(&mut old_events, bot, wait).await, None);
+
+    // A second hello within 10 s is answered only once the interval has passed.
+    alice
+        .handle()
+        .send_plugin_data(&[bot], "mumcord.hello", hello(r#""plugins""#))?;
+    assert!(
+        next_announce(&mut alice_events, bot, Duration::from_secs(15))
+            .await
+            .is_some()
+    );
+    assert!(announced.elapsed() >= Duration::from_secs(9), "throttled");
+
+    running.abort();
+    old.disconnect().await?;
+    alice.disconnect().await
 }

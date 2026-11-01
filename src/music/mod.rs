@@ -3,7 +3,9 @@
 //!
 //! The HTTP side ([`http`]) talks to the bot through [`MusicApi`] and to the [`Player`] state;
 //! the player task decodes on a thread and sends voice through the shared connection.
+//! [`announce`] tells Mumcord clients that the bot speaks the official Mumbot Music plugin.
 
+pub mod announce;
 mod config;
 mod decode;
 pub mod http;
