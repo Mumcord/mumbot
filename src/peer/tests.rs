@@ -19,7 +19,6 @@ const CAROL: u32 = 8;
 const ALICE_ID: u32 = 10;
 const BOB_ID: u32 = 11;
 const CAROL_ID: u32 = 13;
-const GROUP: &str = "relay-users";
 const RID: &str = "0123456789abcdef";
 
 /// How the mock answers `POST /v1/pairs`.
@@ -71,8 +70,6 @@ impl RelayApi for Arc<MockRelay> {
 #[derive(Default)]
 struct MockLink {
     users: Mutex<Option<Users>>,
-    /// Members of the allowed groups; `None` fails like a missing "Write ACL" permission.
-    members: Mutex<Option<HashSet<u32>>>,
     sent: Mutex<Vec<(Vec<u32>, serde_json::Value)>>,
 }
 
@@ -85,18 +82,6 @@ impl MockLink {
 impl Link for Arc<MockLink> {
     async fn users(&self) -> Option<Users> {
         self.users.lock().expect("lock").clone()
-    }
-
-    async fn group_members(
-        &self,
-        channel: Option<&str>,
-        groups: &[String],
-    ) -> Result<HashSet<u32>> {
-        assert_eq!((channel, groups), (None, &[GROUP.to_owned()][..]));
-        match self.members.lock().expect("lock").clone() {
-            Some(members) => Ok(members),
-            None => bail!("permission denied"),
-        }
     }
 
     async fn send(&self, receivers: &[u32], data: Vec<u8>) -> Result<()> {
@@ -134,9 +119,9 @@ fn setup() -> Setup {
     setup_with(Rules::default())
 }
 
-fn groups() -> Rules {
+fn guests_too() -> Rules {
     Rules {
-        allowed_groups: vec![GROUP.to_owned()],
+        registered_only: false,
         ..Rules::default()
     }
 }
@@ -421,53 +406,21 @@ fn tokens(sent: &[(Vec<u32>, serde_json::Value)]) -> usize {
     sent.iter().filter(|(_, json)| json["t"] == "token").count()
 }
 
-fn set_members(s: &Setup, members: Option<&[u32]>) {
-    *s.link.members.lock().expect("lock") = members.map(|ids| ids.iter().copied().collect());
-}
-
 #[tokio::test]
-async fn with_groups_only_members_get_tokens_and_both_must_be_members() {
-    let mut s = ready_with(groups(), &[ALICE, BOB]).await;
+async fn without_registered_only_guests_get_tokens_within_the_limits() {
+    let mut s = ready_with(guests_too(), &[ALICE, GUEST]).await;
     let now = Instant::now();
-    set_members(&s, Some(&[ALICE_ID]));
-    s.peer.on_event(request(ALICE, BOB), now).await;
-    s.peer.on_event(request(BOB, ALICE), now).await;
+    s.peer.on_event(request(GUEST, ALICE), now).await;
+    s.peer.on_event(request(ALICE, GUEST), now).await;
     let sent = s.link.take_sent();
-    assert_eq!(sent[0].1["r"], "denied", "the peer is no member");
-    assert_eq!(sent[1].1["r"], "denied", "the requester is no member");
-
-    // Every request reads the groups again: the server never reports new members.
-    set_members(&s, Some(&[ALICE_ID, BOB_ID]));
-    s.peer.on_event(request(ALICE, BOB), now).await;
-    assert_eq!(s.link.take_sent()[0].1["t"], "token");
-    assert_eq!(s.relay.pairs.lock().expect("lock").len(), 1);
-}
-
-#[tokio::test]
-async fn unreadable_groups_allow_nobody() {
-    let mut s = ready_with(groups(), &[ALICE, BOB]).await;
-    assert!(
-        s.peer.refresh_members().await.is_err(),
-        "the module refuses to start"
-    );
-    set_members(&s, Some(&[ALICE_ID, BOB_ID]));
-    s.peer.refresh_members().await.expect("read");
-    set_members(&s, None);
-    s.peer.on_event(request(ALICE, BOB), Instant::now()).await;
-    assert_eq!(s.link.take_sent()[0].1["r"], "denied");
-    assert!(s.relay.pairs.lock().expect("lock").is_empty());
-}
-
-#[tokio::test]
-async fn losing_the_group_drops_the_open_pairs_at_the_relay() {
-    let mut s = ready_with(groups(), &[ALICE, BOB]).await;
-    set_members(&s, Some(&[ALICE_ID, BOB_ID]));
-    s.peer.on_event(request(ALICE, BOB), Instant::now()).await;
-    set_members(&s, Some(&[ALICE_ID]));
-    s.peer.refresh_members().await.expect("read");
+    assert_eq!(tokens(&sent), 2, "as requester and as peer");
+    for _ in 1..=REQUESTS_PER_MINUTE {
+        s.peer.on_event(request(GUEST, ALICE), now).await;
+    }
     assert_eq!(
-        *s.relay.removed.lock().expect("lock"),
-        vec![cert("b1").expect("b")]
+        s.link.take_sent().last().expect("sent").1["r"],
+        "rate-limited",
+        "the limits still apply"
     );
 }
 
