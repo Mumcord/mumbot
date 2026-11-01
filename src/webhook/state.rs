@@ -10,6 +10,7 @@ use tokio::sync::{Mutex, broadcast};
 use crate::bot::BROADCAST_CAPACITY;
 use crate::checks::resolve_channel;
 use crate::history::{self, HistoryLink};
+use crate::music::announce as music_announce;
 use crate::peer::{Link, Users};
 use crate::plugins;
 use crate::webhook::MAX_MESSAGE_CHARS;
@@ -285,6 +286,22 @@ impl plugins::Link for Arc<BotApi> {
             .ok_or_else(|| anyhow::anyhow!("bot is not connected"))?;
         bot.handle()
             .send_plugin_data(receivers, plugins::wire::DATA_ID, data)?;
+        Ok(())
+    }
+}
+
+/// The music module's plugin announce view of the bot (`src/music/announce.rs`).
+impl music_announce::Link for Arc<BotApi> {
+    async fn announce(&self, receivers: &[u32]) -> Result<()> {
+        let guard = self.bot.lock().await;
+        let bot = guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("bot is not connected"))?;
+        bot.handle().send_plugin_data(
+            receivers,
+            music_announce::DATA_ID,
+            music_announce::MESSAGE.to_vec(),
+        )?;
         Ok(())
     }
 }
