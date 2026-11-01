@@ -9,17 +9,21 @@
 //!    address, ports, fingerprint, reachable or not) all of them get it again in one message.
 //! 2. A client that asks for a token for one peer gets one from the relay's API, sent to both.
 //!
-//! When someone leaves or changes certificate, the relay drops their hash. Runs as a module
+//! Only registered users get tokens, or with `allowed_groups` only members of those groups (read
+//! from the server's ACL, which needs the "Write ACL" permission). When the last session of a
+//! certificate leaves or changes certificate, the relay drops that hash. Runs as a module
 //! (`mumbot peer --config bot.toml`, or `mumbot run` with other modules) with a `[peer]` section.
 
 pub mod config;
+pub mod groups;
 pub mod relay;
 pub mod wire;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::hash::Hash;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use mumcord_protocol::Event;
 use tokio::sync::broadcast;
 use tokio::time::Instant;
@@ -35,6 +39,9 @@ pub const STATUS_INTERVAL: Duration = Duration::from_secs(30);
 const FAILURES_UNTIL_DOWN: u32 = 2;
 /// Token requests per requesting session and minute (FR-4.26).
 pub const REQUESTS_PER_MINUTE: usize = 6;
+/// How often group membership is read again to drop users who lost access. The server tells a
+/// client about ACL changes only when its own permissions change, never about group members.
+pub const MEMBERS_INTERVAL: Duration = Duration::from_secs(60);
 
 /// What the module sees of the Mumble connection.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -43,23 +50,72 @@ pub struct Users {
     pub own: u32,
     /// Everyone online with their certificate hash (SHA-1 hex, `None` without a certificate).
     pub certs: HashMap<u32, Option<String>>,
+    /// Registration ids of the registered users online; guests are missing.
+    pub user_ids: HashMap<u32, u32>,
 }
 
-/// The narrow view of the bot the module needs: who is online, and sending plugin data.
+/// The narrow view of the bot the module needs: who is online, group members, and sending
+/// plugin data.
 pub trait Link {
     /// `None` while the bot is not connected.
     fn users(&self) -> impl Future<Output = Option<Users>> + Send;
+    /// Registration ids of the members of `groups` on the channel `channel` (root when `None`),
+    /// read from the server's ACL.
+    fn group_members(
+        &self,
+        channel: Option<&str>,
+        groups: &[String],
+    ) -> impl Future<Output = Result<HashSet<u32>>> + Send;
     fn send(&self, receivers: &[u32], data: Vec<u8>) -> impl Future<Output = Result<()>> + Send;
 }
 
-/// Sliding one-minute window of token requests per session.
-#[derive(Default)]
-struct RequestLimiter {
-    seen: HashMap<u32, VecDeque<Instant>>,
+/// Who may get tokens and how many, from `[peer]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rules {
+    /// Empty: every registered user.
+    pub allowed_groups: Vec<String>,
+    pub groups_channel: Option<String>,
+    pub cert_requests_per_minute: usize,
+    pub max_pairs_per_cert: usize,
 }
 
-impl RequestLimiter {
-    fn allow(&mut self, session: u32, now: Instant) -> bool {
+impl From<&PeerConfig> for Rules {
+    fn from(config: &PeerConfig) -> Self {
+        Self {
+            allowed_groups: config.allowed_groups.clone(),
+            groups_channel: config.groups_channel.clone(),
+            cert_requests_per_minute: config.cert_requests_per_minute,
+            max_pairs_per_cert: config.max_pairs_per_cert,
+        }
+    }
+}
+
+impl Default for Rules {
+    fn default() -> Self {
+        Self {
+            allowed_groups: Vec::new(),
+            groups_channel: None,
+            cert_requests_per_minute: config::CERT_REQUESTS_PER_MINUTE,
+            max_pairs_per_cert: config::MAX_PAIRS_PER_CERT,
+        }
+    }
+}
+
+/// Sliding one-minute window of token requests per key (session or certificate hash).
+struct RequestLimiter<K> {
+    limit: usize,
+    seen: HashMap<K, VecDeque<Instant>>,
+}
+
+impl<K: Eq + Hash> RequestLimiter<K> {
+    fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            seen: HashMap::new(),
+        }
+    }
+
+    fn allow(&mut self, key: K, now: Instant) -> bool {
         let window = Duration::from_secs(60);
         // Forget idle requesters so the map cannot grow with every session ever seen.
         self.seen.retain(|_, times| {
@@ -68,8 +124,8 @@ impl RequestLimiter {
             }
             !times.is_empty()
         });
-        let times = self.seen.entry(session).or_default();
-        if times.len() >= REQUESTS_PER_MINUTE {
+        let times = self.seen.entry(key).or_default();
+        if times.len() >= self.limit {
             return false;
         }
         times.push_back(now);
@@ -88,11 +144,18 @@ pub struct Peer<R, L> {
     seq: u32,
     /// Sessions whose hello listed `p2p`, with their certificate hash.
     clients: HashMap<u32, Option<String>>,
-    limiter: RequestLimiter,
+    limiter: RequestLimiter<u32>,
+    /// Per certificate, so a reconnect or a second session does not get a fresh budget.
+    cert_limiter: RequestLimiter<String>,
+    rules: Rules,
+    /// Registration ids allowed by `allowed_groups`; `None` while unknown, which allows nobody.
+    members: Option<HashSet<u32>>,
+    /// Pairs handed out, as sorted hash pairs, until one of the two certificates is dropped.
+    pairs: HashSet<(String, String)>,
 }
 
 impl<R: RelayApi, L: Link> Peer<R, L> {
-    pub fn new(relay: R, link: L) -> Self {
+    pub fn new(relay: R, link: L, rules: Rules) -> Self {
         Self {
             relay,
             link,
@@ -101,7 +164,11 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
             failures: 0,
             seq: 0,
             clients: HashMap::new(),
-            limiter: RequestLimiter::default(),
+            limiter: RequestLimiter::new(REQUESTS_PER_MINUTE),
+            cert_limiter: RequestLimiter::new(rules.cert_requests_per_minute),
+            rules,
+            members: None,
+            pairs: HashSet::new(),
         }
     }
 
@@ -132,20 +199,56 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
                 {
                     let old = std::mem::replace(known, user.cert_hash);
                     if let Some(hash) = old {
-                        self.remove_peer(&hash).await;
+                        self.release(&hash).await;
                     }
                 }
             }
             Event::UserRemoved { user, .. } => {
                 if let Some(Some(hash)) = self.clients.remove(&user.session) {
-                    self.remove_peer(&hash).await;
+                    self.release(&hash).await;
                 }
             }
             // Sessions are only valid per connection; after a reconnect the clients greet the
             // bot again because it is a new joiner for them (FR-4.24).
-            Event::Disconnected(_) => self.clients.clear(),
+            Event::Disconnected(_) => {
+                self.clients.clear();
+                self.pairs.clear();
+            }
             _ => {}
         }
+    }
+
+    /// Reads the members of `allowed_groups` again and drops everyone at the relay who lost
+    /// access. Without configured groups there is nothing to read. On an error nobody is
+    /// allowed until the next good read.
+    pub async fn refresh_members(&mut self) -> Result<()> {
+        if self.rules.allowed_groups.is_empty() {
+            return Ok(());
+        }
+        let members = self
+            .link
+            .group_members(
+                self.rules.groups_channel.as_deref(),
+                &self.rules.allowed_groups,
+            )
+            .await;
+        self.members = members.as_ref().ok().cloned();
+        if let Some(users) = self.link.users().await {
+            let lost: HashSet<String> = self
+                .clients
+                .iter()
+                .filter(|(session, _)| !self.allowed(&users, **session))
+                .filter_map(|(_, hash)| hash.clone())
+                .filter(|hash| self.open_pairs(hash) > 0)
+                .collect();
+            for hash in lost {
+                self.remove_peer(&hash).await;
+                self.pairs.retain(|(a, b)| *a != hash && *b != hash);
+            }
+        }
+        let members = members.context("peer: cannot read the allowed groups")?;
+        tracing::info!(members = members.len(), "peer: allowed groups read");
+        Ok(())
     }
 
     /// Polls the relay's status and announces any change to every known client (FR-4.24,
@@ -229,7 +332,13 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
 
     async fn on_request(&mut self, sender: u32, request: TokenRequest, now: Instant) {
         let result = match self.check(sender, &request, now).await {
-            Ok((a, b)) => self.pair(&a, &b).await,
+            Ok((a, b)) => {
+                let pair = self.pair(&a, &b).await;
+                if pair.is_ok() {
+                    self.pairs.insert(pair_key(&a, &b));
+                }
+                pair
+            }
             Err(error) => Err(error),
         };
         match result {
@@ -267,6 +376,19 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
             Some(Some(cert)) if self.clients.contains_key(&sender) => cert.clone(),
             _ => return Err(TokenError::Denied),
         };
+        if !self.cert_limiter.allow(own_cert.clone(), now) {
+            return Err(TokenError::RateLimited);
+        }
+        // Read right before deciding: the server never reports changed group members.
+        if let Err(error) = self.refresh_members().await {
+            tracing::warn!(%error, "peer: allowing nobody until the groups can be read");
+        }
+        // Guests and users outside the allowed groups; the client has no finer reason (the
+        // reasons are a closed list in Mumcord), so the bot's log names it.
+        if !self.allowed(&users, sender) {
+            tracing::debug!("peer: token request from a user without relay access");
+            return Err(TokenError::Denied);
+        }
         if request.peer == sender || request.peer == users.own {
             return Err(TokenError::Denied);
         }
@@ -281,6 +403,16 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
         // Two sessions of one identity are still one user.
         if peer_cert == own_cert {
             return Err(TokenError::Denied);
+        }
+        if !self.allowed(&users, request.peer) {
+            tracing::debug!("peer: token request for a user without relay access");
+            return Err(TokenError::Denied);
+        }
+        // A new token for an open pair replaces the old one at the relay (FR-4.26).
+        if !self.pairs.contains(&pair_key(&own_cert, &peer_cert))
+            && self.open_pairs(&own_cert) >= self.rules.max_pairs_per_cert
+        {
+            return Err(TokenError::RateLimited);
         }
         if self.state != State::Up {
             return Err(TokenError::RelayDown);
@@ -304,10 +436,52 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
         }
     }
 
+    /// Registered, and a member of an allowed group when groups are configured.
+    fn allowed(&self, users: &Users, session: u32) -> bool {
+        let Some(id) = users.user_ids.get(&session) else {
+            return false;
+        };
+        self.rules.allowed_groups.is_empty()
+            || self
+                .members
+                .as_ref()
+                .is_some_and(|members| members.contains(id))
+    }
+
+    fn open_pairs(&self, hash: &str) -> usize {
+        self.pairs
+            .iter()
+            .filter(|(a, b)| a == hash || b == hash)
+            .count()
+    }
+
+    /// A session gave up `hash`: once no other session holds it, the relay drops it with all its
+    /// pairs. Two devices of one user share a certificate, and one leaving must not cut off the
+    /// other.
+    async fn release(&mut self, hash: &str) {
+        if self
+            .clients
+            .values()
+            .any(|other| other.as_deref() == Some(hash))
+        {
+            return;
+        }
+        self.pairs.retain(|(a, b)| a != hash && b != hash);
+        self.remove_peer(hash).await;
+    }
+
     async fn remove_peer(&self, hash: &str) {
         if let Err(error) = self.relay.remove_peer(hash).await {
             tracing::warn!(%error, "peer: the relay did not drop a leaving user");
         }
+    }
+}
+
+fn pair_key(a: &str, b: &str) -> (String, String) {
+    if a <= b {
+        (a.to_owned(), b.to_owned())
+    } else {
+        (b.to_owned(), a.to_owned())
     }
 }
 
@@ -320,14 +494,21 @@ fn valid_token(tok: &str) -> bool {
 }
 
 /// Runs the module until the bot's event stream ends.
+/// Fails right away when `allowed_groups` are configured but cannot be read, so a missing
+/// permission never lets everyone in.
 pub async fn run<R: RelayApi, L: Link>(
     relay: R,
     link: L,
+    rules: Rules,
     mut events: broadcast::Receiver<Event>,
 ) -> Result<()> {
-    let mut peer = Peer::new(relay, link);
+    let mut peer = Peer::new(relay, link, rules);
+    peer.refresh_members().await?;
     let mut status = tokio::time::interval(STATUS_INTERVAL);
     status.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut members = tokio::time::interval(MEMBERS_INTERVAL);
+    members.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    members.reset();
     loop {
         tokio::select! {
             event = events.recv() => match event {
@@ -340,6 +521,11 @@ pub async fn run<R: RelayApi, L: Link>(
                 Err(broadcast::error::RecvError::Closed) => return Ok(()),
             },
             _ = status.tick() => peer.check_status().await,
+            _ = members.tick() => {
+                if let Err(error) = peer.refresh_members().await {
+                    tracing::warn!(%error, "peer: allowing nobody until the groups can be read");
+                }
+            }
         }
     }
 }
