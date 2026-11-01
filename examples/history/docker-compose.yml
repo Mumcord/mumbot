@@ -4,7 +4,7 @@ name: mumbot-history
 
 services:
   mumbot:
-    image: ghcr.io/mumcord/mumbot:0.2.0
+    image: ghcr.io/mumcord/mumbot:0.2.1
     command: ["history"]
     # The bot reconnects by itself after a dropped link; this restarts it after a crash, a
     # reboot or a failed first login (for example while the server is still starting).
