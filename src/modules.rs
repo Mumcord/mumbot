@@ -14,6 +14,7 @@ use serde::Deserialize;
 use crate::history::{self, store::Store};
 use crate::music::{self, Player};
 use crate::peer::{self, HttpRelay};
+use crate::plugins;
 use crate::voice_settings::VoiceSettings;
 use crate::webhook::{self, BotApi, WebhookConfig};
 
@@ -28,6 +29,8 @@ pub enum Module {
     Music,
     /// Records channel chat and answers Mumcord's history sync (`docs/history.md`).
     History,
+    /// Announces the Mumcord plugins the server community uses (`docs/plugins.md`).
+    Plugins,
 }
 
 /// Logs in once and runs the config's enabled modules until the process is stopped or one of
@@ -101,11 +104,26 @@ pub async fn run(config: Arc<WebhookConfig>, music_voice: VoiceSettings) -> Resu
         _ => None,
     };
 
+    let announcement = match (&config.plugins, enabled.contains(&Module::Plugins)) {
+        (Some(plugins_config), true) => {
+            let suggestions = plugins_config.suggestions();
+            let path = plugins::config::seq_path(config.server.data_dir.as_deref());
+            let message = tokio::task::spawn_blocking(move || {
+                plugins::config::current_seq(&path, &suggestions)
+                    .map(|seq| plugins::wire::encode(seq, &suggestions))
+            })
+            .await??;
+            Some(message)
+        }
+        _ => None,
+    };
+
     let api = Arc::new(BotApi::new(Arc::clone(&config)));
     // Subscribed before the login: Mumcord clients greet a joining bot right away, and the
     // history module must see everyone arrive.
     let events = api.subscribe();
     let history_events = api.subscribe();
+    let plugins_events = api.subscribe();
     api.connect().await?;
     tracing::info!(name = %config.server.name, modules = ?enabled, "bot connected");
 
@@ -142,11 +160,18 @@ pub async fn run(config: Arc<WebhookConfig>, music_voice: VoiceSettings) -> Resu
             None => pending().await,
         }
     };
+    let plugins = async {
+        match announcement {
+            Some(message) => plugins::run(Arc::clone(&api), message, plugins_events).await,
+            None => pending().await,
+        }
+    };
     tokio::select! {
         result = webhook => result,
         result = peer => result,
         result = music => result,
         result = history => result,
+        result = plugins => result,
         result = webhook::supervise(Arc::clone(&api)) => result,
     }
 }

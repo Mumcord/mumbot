@@ -14,6 +14,7 @@ use crate::Module;
 use crate::history::HistoryConfig;
 use crate::music::MusicConfig;
 use crate::peer::PeerConfig;
+use crate::plugins::PluginsConfig;
 use crate::voice_settings::VoiceConfig;
 use crate::webhook::{DELIVERY_TIMEOUT, RATE_LIMIT_PER_MINUTE};
 
@@ -48,6 +49,9 @@ pub struct WebhookConfig {
     /// The history module; ignored unless it runs.
     #[serde(default)]
     pub history: Option<HistoryConfig>,
+    /// The plugins module; ignored unless it runs.
+    #[serde(default)]
+    pub plugins: Option<PluginsConfig>,
 
     /// Bitrate and packet length of every module that sends voice (a module can override them
     /// in its own section).
@@ -188,12 +192,15 @@ impl WebhookConfig {
             // Pinning is the peer module's requirement (mumcord spec 04, FR-4.28); for the
             // webhook alone it is a later decision (roadmap, "Server certificate check"), so a
             // pin here would only look like protection. With the peer module it guards the
-            // shared connection, and so it does with the history module (spec 04, FR-4.3).
-            let pins = enabled.contains(&Module::Peer) || enabled.contains(&Module::History);
+            // shared connection, and so it does with the history module (spec 04, FR-4.3) and
+            // the plugins module (spec 06, FR-6.77).
+            let pins = [Module::Peer, Module::History, Module::Plugins]
+                .iter()
+                .any(|module| enabled.contains(module));
             if !pins && self.server.server_cert_sha256.is_some() {
                 bail!(
-                    "server.server_cert_sha256 is only used with the peer or history module; \
-                     remove it for the webhook bot"
+                    "server.server_cert_sha256 is only used with the peer, history or plugins \
+                     module; remove it for the webhook bot"
                 );
             }
         }
@@ -213,6 +220,27 @@ impl WebhookConfig {
             history.validate()?;
             self.server_cert_pin()?;
         }
+        if enabled.contains(&Module::Plugins) {
+            self.validate_plugins()?;
+        }
+        Ok(())
+    }
+
+    /// `[plugins]` and a pinned server certificate are required (mumcord spec 06, FR-6.77 and
+    /// mumbot#20): clients only trust suggestions from a bot that cannot be sent elsewhere.
+    fn validate_plugins(&self) -> Result<()> {
+        let Some(plugins) = &self.plugins else {
+            bail!("config has no [plugins] section");
+        };
+        plugins.validate()?;
+        if self.server.server_cert_sha256.is_none() {
+            bail!(
+                "the plugins module needs server.server_cert_sha256, the SHA-256 of the Mumble \
+                 server certificate, so it never announces plugins on a server it did not mean \
+                 to join"
+            );
+        }
+        self.server_cert_pin()?;
         Ok(())
     }
 
@@ -609,6 +637,33 @@ channels = ["Lobby"]
             .expect("the pin guards the connection the history module shares");
         config.server.server_cert_sha256 = Some("not hex".to_owned());
         assert!(config.validate_modules().is_err(), "a bad pin is reported");
+    }
+
+    #[test]
+    fn the_plugins_module_needs_its_section_and_a_pin() {
+        let mut config = both();
+        config.modules.enabled = vec![Module::Plugins];
+        let error = config.validate_modules().expect_err("no [plugins]");
+        assert!(error.to_string().contains("[plugins]"), "{error}");
+
+        let text = format!(
+            "{}\n[[plugins.announce]]\nid = \"dice\"\nmin = \"1.0.0\"\nsource = \"official\"\n\
+             for = \"board game nights\"\n",
+            BOTH.replace("PIN", &"ab".repeat(32))
+        );
+        let mut config: WebhookConfig = toml::from_str(&text).expect("config");
+        config.modules.enabled = vec![Module::Webhook, Module::Plugins];
+        config
+            .validate_modules()
+            .expect("the pin guards the connection the plugins module shares");
+        config.server.server_cert_sha256 = None;
+        let error = config.validate_modules().expect_err("the pin is required");
+        assert!(error.to_string().contains("server_cert_sha256"), "{error}");
+
+        let mut config: WebhookConfig = toml::from_str(&text).expect("config");
+        config.modules.enabled = vec![Module::Plugins];
+        config.plugins.as_mut().expect("plugins").announce[0].min = "one".to_owned();
+        assert!(config.validate_modules().is_err(), "entries are checked");
     }
 
     #[test]

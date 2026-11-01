@@ -171,6 +171,7 @@ fn peer_config(dir: &Path, name: &str, relay_url: &str, pin: String) -> Arc<Webh
             ..PeerConfig::new(relay_url)
         }),
         history: None,
+        plugins: None,
 
         voice: Default::default(),
         music: None,

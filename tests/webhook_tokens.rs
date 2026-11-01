@@ -79,6 +79,7 @@ fn config(
         },
         peer: None,
         history: None,
+        plugins: None,
 
         voice: Default::default(),
         music: None,
