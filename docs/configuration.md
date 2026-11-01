@@ -1,7 +1,7 @@
 # Configuration reference
 
 The bot's modules read one TOML file, `bot.toml`, given with
-`mumbot webhook --config <file>`, `mumbot peer --config <file>`, `mumbot history --config <file>`, `mumbot music --config <file>`
+`mumbot webhook --config <file>`, `mumbot peer --config <file>`, `mumbot history --config <file>`, `mumbot music --config <file>`, `mumbot plugins --config <file>`
 or `mumbot run --config <file>`,
 or the `MUMBOT_CONFIG` environment variable. Modules that run together share the `[server]`
 section and its connection ([modules.md](modules.md)). The test bot needs no file; it takes command-line
@@ -24,7 +24,7 @@ Rules that apply to the whole file:
 
 | Key | Type | Default | Env | Meaning |
 | --- | --- | --- | --- | --- |
-| `enabled` | list of `"webhook"`, `"peer"`, `"history"`, `"music"` | `[]` | `MUMBOT_MODULES` (comma-separated, via `--modules`) | Modules for `mumbot run`. `--modules`, `MUMBOT_MODULES`, `mumbot webhook`, `mumbot peer`, `mumbot history` and `mumbot music` replace it. Only the sections of the chosen modules are checked. |
+| `enabled` | list of `"webhook"`, `"peer"`, `"history"`, `"music"`, `"plugins"` | `[]` | `MUMBOT_MODULES` (comma-separated, via `--modules`) | Modules for `mumbot run`. `--modules`, `MUMBOT_MODULES`, `mumbot webhook`, `mumbot peer`, `mumbot history`, `mumbot music` and `mumbot plugins` replace it. Only the sections of the chosen modules are checked. |
 
 ## `[server]`: the Mumble server and the bot's identity
 
@@ -37,7 +37,7 @@ Rules that apply to the whole file:
 | `channel` | string | none: the bot stays in the root channel | | Channel to join at login: a name (`Lobby`) or a path (`Root/Ops/Alerts`). |
 | `password` | string | none | `SERVER_PASSWORD` | Connect password, if the server has one. Without this key the bot uses `SERVER_PASSWORD`; prefer the environment variable so the file holds fewer secrets. |
 | `data_dir` | path | `MUMBOT_DATA`, else `MUMCORD_BOT_DATA`, else `$XDG_DATA_HOME/mumbot`, else `~/.local/share/mumbot` | `MUMBOT_DATA` | Folder for the client certificate (`certs/<cert_name>/`). In Docker: `/data`, keep it on a volume. |
-| `server_cert_sha256` | string | none | | Required with the peer module: SHA-256 of the server's certificate, 64 hex digits, colons allowed (`openssl x509 -noout -fingerprint -sha256`); a server with another certificate is refused. Optional with the history module. The webhook module alone rejects this key (it does not pin yet); with the peer or history module it protects the shared connection. |
+| `server_cert_sha256` | string | none | | Required with the peer and plugins modules: SHA-256 of the server's certificate, 64 hex digits, colons allowed (`openssl x509 -noout -fingerprint -sha256`); a server with another certificate is refused. Optional with the history module. The webhook module alone rejects this key (it does not pin yet); with the peer, history or plugins module it protects the shared connection. |
 | `superuser` | boolean | `false` | `SUPERUSER_PASSWORD` | Log in as `SuperUser` with the password from `SUPERUSER_PASSWORD` instead of a certificate. Only for local test servers. |
 
 When `SERVER_PASSWORD` or `SUPERUSER_PASSWORD` is not in the environment, the bot also looks in
@@ -132,6 +132,26 @@ and who gets it: [history.md](history.md).
 | `retention_days` | number | `7` | | Days a message is kept, 1 to 7 (history sync never asks for older messages). |
 | `max_messages_per_channel` | number | `5000` | | Newest messages kept per channel, 1 to 100000. |
 | `database` | path | `history.sqlite3` in the data directory | | SQLite file with the recorded messages; created readable only by the bot's user. Use one per server. |
+
+## `[plugins]`: the plugins bot
+
+Used only by the plugins module (`mumbot plugins`, or `plugins` in `mumbot run`). Needs
+`server.server_cert_sha256` and a registered bot user. How clients get the list:
+[plugins.md](plugins.md).
+
+`[[plugins.announce]]`: one entry per suggested plugin, 1 to 8 entries, in the order Mumcord
+shows them. The whole announcement must fit into 1000 bytes; all of it is checked at start.
+
+| Key | Type | Default | Environment | Meaning |
+| --- | --- | --- | --- | --- |
+| `id` | string | required | | Plugin id from its manifest: 3 to 32 characters, lowercase letters, digits and `-`, starting with a letter. Each id once. |
+| `min` | string | required | | Lowest version the community uses, `MAJOR.MINOR.PATCH`. |
+| `source` | string | required | | `official`, or the `https://` address of a third-party repository's `index.json`. |
+| `key` | string | none | | The third-party repository's minisign public key (56 characters, starting with `RW`). Required for a third-party source, not allowed for `official`. |
+| `for` | string | required | | What the community uses the plugin for, 1 to 40 characters, shown to users. |
+
+The announcement counter `seq` is kept in `plugins-seq.json` in the data directory and grows by
+one whenever the list changes between two starts.
 
 ## `[voice]`: bitrate of voice senders (optional)
 

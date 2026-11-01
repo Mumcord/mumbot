@@ -29,6 +29,20 @@ channels = ["Lobby"]
 # api_secret_file = "/run/secrets/mumbot_peer_api_secret"
 # api_fp = "SHA-256 OF THE RELAY API CERTIFICATE, REQUIRED FOR HTTPS"
 
+# Only for `mumbot plugins` (Mumcord plugin suggestions, docs/plugins.md). 1 to 8 entries; needs
+# server.server_cert_sha256 and a registered bot user.
+# [[plugins.announce]]
+# id = "dice"
+# min = "1.0.0"
+# source = "official"
+# for = "board game nights"
+# [[plugins.announce]]
+# id = "guild-calendar"
+# min = "0.9.0"
+# source = "https://plugins.example.org/v1/index.json"
+# key = "MINISIGN PUBLIC KEY OF THAT REPOSITORY (RW...)"
+# for = "raid sign-ups"
+
 # Only for `mumbot history` (channel history for Mumcord clients, docs/history.md). Nothing is
 # recorded that is not listed; private messages and voice never are.
 # [history]

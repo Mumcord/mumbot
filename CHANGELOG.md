@@ -4,6 +4,16 @@ All notable changes to Mumbot are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Plugins bot (`mumbot plugins`, or `plugins` in `mumbot run`): announces up to 8 Mumcord plugins
+  the server community uses (`[[plugins.announce]]`) to Mumcord clients whose hello lists
+  `server-plugins`, at most once a minute per client, as plugin data `mumcord.srvplugins`. Needs a
+  registered bot user and `server.server_cert_sha256`; the list is checked at start and a changed
+  list is announced with a higher `seq` after a restart. See `docs/plugins.md` (#20).
+
 ## [0.2.1] - 2026-11-01
 
 ### Security

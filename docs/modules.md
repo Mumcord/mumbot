@@ -10,6 +10,7 @@ user, one client certificate, one reconnect loop.
 | `peer` | Announces a mumpeer relay to Mumcord clients and hands out relay tokens ([peer.md](peer.md)). | `[peer]`, `server.server_cert_sha256` |
 | `history` | Records the chat of chosen channels and answers Mumcord's history sync ([history.md](history.md)). | `[history]` |
 | `music` | HTTP API that plays MP3s as voice into a channel, with a queue ([music.md](music.md)). | `[music]` with a `media_dir` or URLs, at least one `[[music.keys]]` |
+| `plugins` | Announces the Mumcord plugins the server community uses to Mumcord clients ([plugins.md](plugins.md)). | `[[plugins.announce]]`, `server.server_cert_sha256`, a registered bot user |
 
 ## Choosing modules
 
@@ -20,6 +21,7 @@ mumbot webhook --config bot.toml
 mumbot peer --config bot.toml
 mumbot music --config bot.toml
 mumbot history --config bot.toml
+mumbot plugins --config bot.toml
 ```
 
 Several modules, on the command line:
@@ -37,14 +39,14 @@ enabled = ["webhook", "peer"]
 ```
 
 - The command line wins: `--modules`, `MUMBOT_MODULES`, `mumbot webhook`, `mumbot peer` and
-  `mumbot history` and `mumbot music` replace the config's list.
+  `mumbot history`, `mumbot music` and `mumbot plugins` replace the config's list.
 - The music module moves the shared bot user into the channel of the track it plays and back to
   `server.channel` afterwards; the other modules work the same from any channel.
 - Only the sections of the chosen modules are checked, so one `bot.toml` can hold settings for
   modules that do not run.
 - `mumbot run` without any choice stops with an error that names both ways to choose.
 - When one module fails, the whole bot stops (Docker's restart policy brings it back).
-- `server.server_cert_sha256` is required with `peer`, optional with `history`, and then protects
+- `server.server_cert_sha256` is required with `peer` and `plugins`, optional with `history`, and then protects
   the shared connection; the webhook module alone rejects it (it does not pin yet).
 
 Existing webhook setups need no change: `[modules]` is optional and the Docker image still runs

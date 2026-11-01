@@ -38,6 +38,7 @@ same in the official Mumble client and in [Mumcord](https://github.com/Mumcord/m
 | **Test bot** (`say`, `expect`, `play`, `script`, …) | A scripted second participant for automated tests: chat, user state, admin steps, checks, voice play/record/level. Exit code 0 = passed. | tester only | [cli.md](docs/cli.md) |
 | **Load test** | Fills a local test server with up to 1000 users, with churn, chat and talkers. | tester, from source | [cli.md](docs/cli.md#load-test) |
 | **`music`** | Plays MP3s (from a media folder, an upload or an allowed URL) as voice into a channel, with a queue, skip, stop and volume over an HTTP API. | main + tester | [music.md](docs/music.md) |
+| **`plugins`** | Stays online and suggests the Mumcord plugins your community uses to every Mumcord client that joins. | main + tester | [plugins.md](docs/plugins.md) |
 | **`history`** | Stays online, records the chat of the channels you choose and hands it to Mumcord clients that were offline (history sync). | main + tester | [history.md](docs/history.md) |
 
 > [!NOTE]
@@ -54,6 +55,7 @@ flowchart LR
         peer["peer module"]
         music["music module"]
         history["history module"]
+        plugins["plugins module"]
     end
     bot -- "TLS, own client certificate" --> server[("Standard Mumble server<br/>(unmodified)")]
     peer -- "status and tokens (relay API)" --> relay["mumpeer relay"]
@@ -63,8 +65,9 @@ flowchart LR
     tester["mumbot-tester in CI"] -- "scripted steps, exit code" --> testsrv[("Throwaway test server")]
 ```
 
-- The bot is a normal user on the server. Chat goes in as ordinary channel messages; the `peer`
-  module talks to Mumcord clients with plugin data, which official Mumble clients ignore.
+- The bot is a normal user on the server. Chat goes in as ordinary channel messages; the `peer`,
+  `history` and `plugins` modules talk to Mumcord clients with plugin data, which official Mumble
+  clients ignore.
 - The bot itself never relays voice. mumpeer does that, and only for Mumcord clients that ask for it.
   Only registered users get relay tokens (`[peer] registered_only`, on by default); see
   [docs/peer.md](docs/peer.md#who-gets-tokens).
@@ -152,6 +155,7 @@ mumbot webhook --config bot.toml                          # one module
 mumbot peer --config bot.toml
 mumbot music --config bot.toml
 mumbot history --config bot.toml
+mumbot plugins --config bot.toml
 mumbot run --config bot.toml --modules webhook,peer,history,music # several, one connection, one bot user
 MUMBOT_MODULES=webhook,peer,history,music mumbot run --config bot.toml  # same, handy in Docker
 ```
@@ -201,6 +205,7 @@ One TOML file (`bot.toml`, in Docker `/config/bot.toml`) with a section per conc
 | `[peer]` | The mumpeer relay for the peer module. |
 | `[music]`, `[[music.keys]]` | The music module's listener, media folder, URL allowlist, limits and API keys. |
 | `[history]` | Channels to record, retention and database for the history module. |
+| `[[plugins.announce]]` | Up to 8 Mumcord plugins the plugins module suggests. |
 | `[voice]` | Voice bitrate (`bitrate`, `--bitrate`, `MUMBOT_VOICE_BITRATE`). |
 
 Voice senders (the music module and the tester's `play`) use one bitrate setting:
@@ -226,6 +231,7 @@ key, default and variable: [docs/configuration.md](docs/configuration.md); a com
 | [Peer bot](docs/peer.md) | Announce a mumpeer relay to Mumcord clients. |
 | [Music bot](docs/music.md) | Play MP3s into a channel: endpoints, sources, limits. |
 | [History bot](docs/history.md) | Record channel chat for Mumcord clients that were offline. |
+| [Plugins bot](docs/plugins.md) | Suggest your community's Mumcord plugins to everyone who joins. |
 | [CLI](docs/cli.md) | Every command and flag, test-bot scripts, voice checks, load test. |
 | [Security](docs/security.md) | API keys, the client certificate, TLS, server certificate checking. |
 
@@ -289,7 +295,7 @@ names differ. Check downloads against `SHA256SUMS` from the same release.
 
 | | **mumbot** (main) | **mumbot-tester** |
 | --- | --- | --- |
-| Contains | The production modules (`webhook`, `peer`, `history`, `music`). No test code. | The same plus the scripted test bot (checks, voice, samples). |
+| Contains | The production modules (`webhook`, `peer`, `history`, `music`, `plugins`). No test code. | The same plus the scripted test bot (checks, voice, samples). |
 | Use it for | Bots on real servers. | Testing Mumble servers and clients in CI. |
 | Archive | `mumbot-<version>-<target>` | `mumbot-tester-<version>-<target>` |
 | Docker image | `ghcr.io/mumcord/mumbot:<version>` | `ghcr.io/mumcord/mumbot-tester:<version>` |

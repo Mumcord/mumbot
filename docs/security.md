@@ -7,7 +7,7 @@ What mumbot protects, what it does not (yet), and what an operator has to take c
 | Area | State |
 | --- | --- |
 | Connection to the Mumble server | Always TLS, with the bot's own client certificate. |
-| Checking the server's certificate | The peer bot requires `server.server_cert_sha256` and refuses any other certificate; the history bot does so when the key is set. The webhook and test bots accept any server certificate (see below). |
+| Checking the server's certificate | The peer and plugins bots require `server.server_cert_sha256` and refuse any other certificate; the history bot does so when the key is set. The webhook and test bots accept any server certificate (see below). |
 | HTTP API | Plain HTTP, loopback by default; API keys in a header, compared in constant time. |
 | Secrets in files | `bot.toml`, `.env` and certificates are git-ignored; only placeholders in the repository. |
 | Logs | Request metadata only: no keys, no passwords, no message texts. |
