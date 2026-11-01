@@ -4,9 +4,13 @@ All notable changes to Mumbot are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.1] - 2026-11-01
 
 ### Security
+
+Hardening of the `peer` bot. Upgrading is recommended for everyone who runs it; guests are now
+refused by default, so allow them again only knowingly (`registered_only = false` can let anyone
+use the relay as a bandwidth tunnel).
 
 - Peer bot: relay tokens only for registered users, as requester and as peer (`[peer]
   registered_only`, default `true`; `false` lets guests in again and logs a warning) (#29).
