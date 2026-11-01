@@ -26,7 +26,7 @@ services:
       retries: 30
 
   mumbot:
-    image: ghcr.io/mumcord/mumbot:0.3.0
+    image: ghcr.io/mumcord/mumbot:0.4.0
     command: ["webhook"]
     restart: unless-stopped
     # The bot gives up when its very first login fails, so it starts once the server is ready.

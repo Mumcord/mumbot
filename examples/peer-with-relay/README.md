@@ -9,7 +9,7 @@ connection fails. How the bot works: [docs/peer.md](../../docs/peer.md).
 | --- | --- | --- |
 | `mumble-server` | `mumblevoip/mumble-server:v1.5.735` (unmodified upstream image) | `127.0.0.1:64738` (Mumble client) |
 | `mumpeer` | `ghcr.io/mumcord/mumpeer:0.1.0` | `443/udp` and `443/tcp` on `RELAY_BIND` (Mumcord clients); API on loopback inside the pair |
-| `mumbot` | `ghcr.io/mumcord/mumbot:0.3.0`, command `peer` | Shares the relay's network namespace; no ports of its own |
+| `mumbot` | `ghcr.io/mumcord/mumbot:0.4.0`, command `peer` | Shares the relay's network namespace; no ports of its own |
 
 ## Prerequisites
 
