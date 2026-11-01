@@ -86,8 +86,7 @@ bot ignores it. See [peer.md](peer.md).
 | `allow_insecure_http` | bool | `false` | | Allows plain `http` to another host anyway, for example inside a private container network; logs a warning. |
 | `api_secret_file` | path | none | `MUMBOT_PEER_API_SECRET` | File with the API secret on its first line. The environment variable wins when set. One of both is required; the secret must have at least 32 characters and no control characters. The file must be private (`chmod 600`): one that group or others can read stops the bot at start. Keep it out of Git (`*.secret` is git-ignored). Never logged. |
 | `api_fp` | string | none | | SHA-256 of the API's TLS certificate (64 hex digits, colons allowed). Required for `https`: the relay's certificate is self-signed, so it is pinned instead of checked against certificate authorities. |
-| `allowed_groups` | list of strings | `[]` | | Mumble groups whose members may get relay tokens. Empty: every registered user; guests never. Needs the "Write ACL" permission for the bot on `groups_channel`; without it the bot refuses to start. See [peer.md](peer.md#who-gets-tokens). |
-| `groups_channel` | string | root channel | | Channel (name) whose ACL defines `allowed_groups`, so the bot needs "Write ACL" only there. |
+| `registered_only` | bool | `true` | | Only registered users get relay tokens. `false` lets guests use the relay too and logs a warning at start: anyone can then use the relay as a bandwidth tunnel with fresh certificates. See [peer.md](peer.md#who-gets-tokens). |
 | `cert_requests_per_minute` | integer | `10` | | Token requests per certificate and minute, across all sessions with that certificate (besides 6 per session). At least 1. |
 | `max_pairs_per_cert` | integer | `4` | | Open relay pairs per certificate. At least 1. |
 

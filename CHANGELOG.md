@@ -8,10 +8,8 @@ All notable changes to Mumbot are listed here. The format follows
 
 ### Security
 
-- Peer bot: relay tokens only for registered users, or with the new `[peer] allowed_groups` only
-  for members of those Mumble groups, read from the server's ACL (needs "Write ACL" for the bot on
-  the root channel or `groups_channel`; the bot refuses to start if it cannot read them). Both
-  users of a pair must be allowed, and someone who loses access is dropped at the relay (#29).
+- Peer bot: relay tokens only for registered users, as requester and as peer (`[peer]
+  registered_only`, default `true`; `false` lets guests in again and logs a warning) (#29).
 - Peer bot: the relay drops a certificate only when its last session leaves, so a second device
   keeps its relay session (#29).
 - Peer bot: token requests are also limited per certificate (`cert_requests_per_minute`, default
