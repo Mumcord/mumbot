@@ -9,7 +9,9 @@ use tokio::sync::{Mutex, broadcast};
 
 use crate::bot::BROADCAST_CAPACITY;
 use crate::checks::resolve_channel;
+use crate::hello;
 use crate::history::{self, HistoryLink};
+use crate::peer::wire::HELLO_ID;
 use crate::peer::{Link, Users};
 use crate::plugins;
 use crate::webhook::MAX_MESSAGE_CHARS;
@@ -285,6 +287,19 @@ impl plugins::Link for Arc<BotApi> {
             .ok_or_else(|| anyhow::anyhow!("bot is not connected"))?;
         bot.handle()
             .send_plugin_data(receivers, plugins::wire::DATA_ID, data)?;
+        Ok(())
+    }
+}
+
+/// The bot's own Mumcord hello (`src/hello.rs`).
+impl hello::Link for Arc<BotApi> {
+    async fn send_hello(&self, receivers: &[u32], message: &[u8]) -> Result<()> {
+        let guard = self.bot.lock().await;
+        let bot = guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("bot is not connected"))?;
+        bot.handle()
+            .send_plugin_data(receivers, HELLO_ID, message.to_vec())?;
         Ok(())
     }
 }

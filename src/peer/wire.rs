@@ -142,6 +142,12 @@ struct Hello {
     features: Vec<String>,
 }
 
+/// Whether the payload is a Mumcord hello (any version from 1 up), whatever it lists.
+pub fn is_hello(data: &[u8]) -> bool {
+    data.len() <= mumcord_protocol::PLUGIN_DATA_MAX
+        && serde_json::from_slice::<Hello>(data).is_ok_and(|h| h.app == "mumcord" && h.v >= 1)
+}
+
 /// Whether the payload is a Mumcord hello (any version from 1 up) that lists `p2p`.
 pub fn is_p2p_hello(data: &[u8]) -> bool {
     hello_lists(data, P2P_FEATURE)

@@ -57,6 +57,28 @@ The image's health check asks the webhook module's `/health` on port 8080; when 
 module does not run, disable it (as [`examples/history/`](../examples/history/) does) or replace it
 (the music module answers `/health` on its own port, see [`examples/music/`](../examples/music/)).
 
+## How Mumcord clients see the bot
+
+Whatever modules run, the bot tells Mumcord clients that it is a bot, so the client can show it
+as one:
+
+- Every Mumcord client says hello (plugin data `mumcord.hello`) when it joins and to everyone who
+  joins later. The bot answers each hello with its own, to that client only:
+
+  ```json
+  {"app":"mumcord","v":1,"features":[],"bot":{"name":"mumbot","version":"0.3.0","modules":["webhook","music"]}}
+  ```
+
+  `version` is the bot's version, `modules` the modules it runs, in the order of the list above.
+  Clients that do not know the `bot` object ignore it.
+- At most once every 10 seconds per client. Answers to several clients go out together in one
+  message per second, which leaves the server's plugin data limit (4 per second) to the other
+  modules.
+- The bot never greets first; it only answers. Changing the modules needs a restart, after which
+  every client greets the bot again (it is a new joiner for them) and gets the new list.
+- Official Mumble clients send no hello and get nothing. Nothing is needed on the server beyond
+  plugin data (Mumble 1.4 or newer); there is nothing to configure.
+
 ## The two builds
 
 | Build | Contains | Release archive | Docker image |

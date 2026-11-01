@@ -54,7 +54,8 @@ official Mumble clients ignore. Each message is compact JSON of at most 1000 byt
    every remembered client gets the new announcement in one message. Before the relay answered
    once there is nothing to announce; waiting clients get it as soon as it answers. After a bot
    restart the clients greet the bot again (it is a new joiner for them) and get it that way. The
-   bot never sends a Mumcord hello itself.
+   bot answers each hello with its own, which says it is a bot (see
+   [How Mumcord clients see the bot](modules.md#how-mumcord-clients-see-the-bot)).
 
 2. **Token.** A client that wants a relayed connection to one other person asks the bot:
 

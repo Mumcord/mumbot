@@ -9,8 +9,9 @@ use std::future::pending;
 use std::sync::Arc;
 
 use anyhow::Result;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
+use crate::hello;
 use crate::history::{self, store::Store};
 use crate::music::{self, Player};
 use crate::peer::{self, HttpRelay};
@@ -18,7 +19,9 @@ use crate::plugins;
 use crate::voice_settings::VoiceSettings;
 use crate::webhook::{self, BotApi, WebhookConfig};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, clap::ValueEnum)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize, clap::ValueEnum,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Module {
     /// HTTP API that posts messages into channels (`docs/webhook.md`).
@@ -124,6 +127,7 @@ pub async fn run(config: Arc<WebhookConfig>, music_voice: VoiceSettings) -> Resu
     let events = api.subscribe();
     let history_events = api.subscribe();
     let plugins_events = api.subscribe();
+    let hello_events = api.subscribe();
     api.connect().await?;
     tracing::info!(name = %config.server.name, modules = ?enabled, "bot connected");
 
@@ -172,6 +176,7 @@ pub async fn run(config: Arc<WebhookConfig>, music_voice: VoiceSettings) -> Resu
         result = music => result,
         result = history => result,
         result = plugins => result,
+        result = hello::run(Arc::clone(&api), hello::encode(enabled), hello_events) => result,
         result = webhook::supervise(Arc::clone(&api)) => result,
     }
 }

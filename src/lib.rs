@@ -12,6 +12,7 @@ mod bot;
 pub mod cert;
 pub mod checks;
 pub mod env;
+pub mod hello;
 pub mod history;
 pub mod modules;
 pub mod music;
