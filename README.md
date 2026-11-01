@@ -66,8 +66,7 @@ flowchart LR
 - The bot is a normal user on the server. Chat goes in as ordinary channel messages; the `peer`
   module talks to Mumcord clients with plugin data, which official Mumble clients ignore.
 - The bot itself never relays voice. mumpeer does that, and only for Mumcord clients that ask for it.
-  Only registered users get relay tokens, or with `[peer] allowed_groups` only members of those
-  Mumble groups (the bot then needs the "Write ACL" permission on that channel to read them); see
+  Only registered users get relay tokens (`[peer] registered_only`, on by default); see
   [docs/peer.md](docs/peer.md#who-gets-tokens).
 - The tester build belongs in CI, next to a throwaway server, never on a production server.
 
