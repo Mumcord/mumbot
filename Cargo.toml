@@ -70,8 +70,3 @@ debug = "line-tables-only"
 lto = "thin"
 codegen-units = 1
 strip = true
-
-# Until mumcord-protocol with `Event::Acl` and `Handle::query_acl` (Mumcord/mumcord#300) is on
-# crates.io; then this goes and the version above is raised.
-[patch.crates-io]
-mumcord-protocol = { git = "https://github.com/Mumcord/mumcord", rev = "14dca75b948625922bdfbc53a18b8cdce9ae67ff" }
