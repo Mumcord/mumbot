@@ -29,7 +29,17 @@ use tokio::time::Instant;
 pub use config::{PeerConfig, Secret};
 pub use relay::{HttpRelay, Pair, PairError, RelayApi, Status};
 
-use wire::{Relay, State, Token, TokenError, TokenRequest};
+use wire::{
+    PeerMessage, RelayAnnouncement, RelayState as State, RelayToken, RequestId,
+    TokenErrorReason as TokenError,
+};
+
+/// A `token-req`: the sender wants a relay token for itself and session `peer`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TokenRequest {
+    rid: RequestId,
+    peer: u32,
+}
 
 /// How often the relay's status is polled (FR-4.25).
 pub const STATUS_INTERVAL: Duration = Duration::from_secs(30);
@@ -168,9 +178,11 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
                 if data.data_id == wire::HELLO_ID && wire::is_p2p_hello(&data.data) {
                     self.on_hello(sender).await;
                 } else if data.data_id == wire::DATA_ID
-                    && let Some(request) = wire::decode_request(&data.data)
+                    && let Ok(PeerMessage::TokenRequest { rid, peer }) =
+                        PeerMessage::decode(&data.data)
                 {
-                    self.on_request(sender, request, now).await;
+                    self.on_request(sender, TokenRequest { rid, peer }, now)
+                        .await;
                 }
             }
             Event::UserUpdated(change) => {
@@ -238,21 +250,21 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
     }
 
     /// The announcement as of now; `None` while the relay never answered.
-    fn announcement(&self) -> Option<Relay> {
+    fn announcement(&self) -> Option<PeerMessage> {
         let status = self.status.as_ref()?;
-        Some(Relay {
+        Some(PeerMessage::Relay(RelayAnnouncement {
             host: status.host.clone(),
             udp: status.udp,
             tcp: status.tcp,
-            fp: status.fp.clone(),
+            fingerprint: fingerprint(&status.fp)?,
             state: self.state,
             seq: self.seq,
-        })
+        }))
     }
 
     async fn announce(&self, receivers: &[u32]) {
         if let Some(relay) = self.announcement() {
-            self.send(receivers, wire::encode_relay(&relay)).await;
+            self.send(receivers, &relay).await;
         }
     }
 
@@ -272,7 +284,14 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
         self.announce(&[sender]).await;
     }
 
-    async fn send(&self, receivers: &[u32], data: Vec<u8>) {
+    async fn send(&self, receivers: &[u32], message: &PeerMessage) {
+        let data = match message.encode() {
+            Ok(data) => data,
+            Err(error) => {
+                tracing::warn!(%error, "peer: message not encoded");
+                return;
+            }
+        };
         if let Err(error) = self.link.send(receivers, data).await {
             tracing::warn!(%error, "peer: plugin data not sent");
         }
@@ -290,21 +309,23 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
             Err(error) => Err(error),
         };
         match result {
-            Ok(pair) => {
-                let token = Token {
+            Ok((token, ttl)) => {
+                let token = PeerMessage::Token {
                     rid: request.rid,
                     a: sender,
                     b: request.peer,
-                    tok: pair.tok,
-                    ttl: u16::try_from(pair.expires_in).unwrap_or(u16::MAX),
+                    token,
+                    ttl,
                 };
-                self.send(&[sender, request.peer], wire::encode_token(&token))
-                    .await;
+                self.send(&[sender, request.peer], &token).await;
             }
-            Err(error) => {
-                tracing::debug!(?error, "peer: token request refused");
-                self.send(&[sender], wire::encode_token_err(&request.rid, error))
-                    .await;
+            Err(reason) => {
+                tracing::debug!(?reason, "peer: token request refused");
+                let error = PeerMessage::TokenError {
+                    rid: request.rid,
+                    reason,
+                };
+                self.send(&[sender], &error).await;
             }
         }
     }
@@ -364,13 +385,16 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
         Ok((own_cert, peer_cert))
     }
 
-    async fn pair(&self, a: &str, b: &str) -> Result<Pair, TokenError> {
+    /// A token for the pair from the relay, with its validity in seconds.
+    async fn pair(&self, a: &str, b: &str) -> Result<(RelayToken, u16), TokenError> {
         match self.relay.create_pair(a, b).await {
-            Ok(pair) if valid_token(&pair.tok) => Ok(pair),
-            Ok(_) => {
-                tracing::warn!("peer: the relay sent a malformed token");
-                Err(TokenError::RelayDown)
-            }
+            Ok(pair) => match RelayToken::parse(&pair.tok) {
+                Ok(token) => Ok((token, u16::try_from(pair.expires_in).unwrap_or(u16::MAX))),
+                Err(_) => {
+                    tracing::warn!("peer: the relay sent a malformed token");
+                    Err(TokenError::RelayDown)
+                }
+            },
             Err(PairError::Full) => Err(TokenError::RelayFull),
             Err(PairError::RateLimited) => Err(TokenError::RateLimited),
             Err(PairError::Unavailable(error)) => {
@@ -423,11 +447,16 @@ fn pair_key(a: &str, b: &str) -> (String, String) {
 }
 
 /// 43 base64url characters: 32 random bytes from the relay.
-fn valid_token(tok: &str) -> bool {
-    tok.len() == 43
-        && tok
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+/// The relay certificate fingerprint from the lowercase hex the status check normalized it to.
+fn fingerprint(hex: &str) -> Option<[u8; 32]> {
+    if hex.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (i, byte) in out.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(hex.get(i * 2..i * 2 + 2)?, 16).ok()?;
+    }
+    Some(out)
 }
 
 /// Runs the module until the bot's event stream ends.
