@@ -451,9 +451,8 @@ mod tests {
 
     fn relay(url: &str, pin: &str) -> HttpRelay {
         let config = PeerConfig {
-            api_url: url.into(),
-            api_secret_file: None,
             api_fp: Some(pin.into()),
+            ..PeerConfig::new(url)
         };
         HttpRelay::new(&config, Secret::new("s".repeat(32))).expect("relay")
     }

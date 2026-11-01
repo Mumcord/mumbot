@@ -59,11 +59,14 @@ pub async fn run(config: Arc<WebhookConfig>, music_voice: VoiceSettings) -> Resu
             if !peer.url()?.is_local_or_tls() {
                 tracing::warn!(
                     api_url = %peer.api_url,
-                    "peer: relay API over plain HTTP to another host: the API secret travels in \
-                     clear text, use https with api_fp"
+                    "peer: allow_insecure_http is set, the API secret travels in clear text to \
+                     another host; use https with api_fp"
                 );
             }
-            Some(HttpRelay::new(peer, peer.load_secret()?)?)
+            Some((
+                HttpRelay::new(peer, peer.load_secret()?)?,
+                peer::Rules::from(peer),
+            ))
         }
         _ => None,
     };
@@ -114,7 +117,7 @@ pub async fn run(config: Arc<WebhookConfig>, music_voice: VoiceSettings) -> Resu
     };
     let peer = async {
         match relay {
-            Some(relay) => peer::run(relay, Arc::clone(&api), events).await,
+            Some((relay, rules)) => peer::run(relay, Arc::clone(&api), rules, events).await,
             None => pending().await,
         }
     };

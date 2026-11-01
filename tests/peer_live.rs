@@ -4,7 +4,9 @@
 //!
 //! Two test bots play Mumcord clients: they send a Mumcord hello with `p2p`, get the relay
 //! announcement, and one asks for a token for the other. The mock relay checks the API calls
-//! (mumcord spec 04, sections 6.4 and 6.6, FR-4.22 to FR-4.28).
+//! (mumcord spec 04, sections 6.4 and 6.6, FR-4.22 to FR-4.28). Relay access (mumbot#29): only
+//! registered users, or members of `allowed_groups`; a certificate is dropped when its last
+//! session leaves.
 
 #![cfg(feature = "tester")]
 
@@ -13,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use mumbot::peer::PeerConfig;
-use mumbot::protocol::Event;
+use mumbot::protocol::{Event, permissions, proto};
 use mumbot::voice_settings::VoiceSettings;
 use mumbot::webhook::{ApiKey, ChannelRef, HttpConfig, ModulesConfig, ServerConfig, WebhookConfig};
 use mumbot::{Bot, BotConfig, MessageCheck, Module, UserCheck, env, modules};
@@ -143,6 +145,12 @@ fn client(dir: &Path, name: &str) -> BotConfig {
 fn peer_config(dir: &Path, name: &str, relay_url: &str, pin: String) -> Arc<WebhookConfig> {
     let secret_file = dir.join("relay.secret");
     std::fs::write(&secret_file, format!("{SECRET}\n")).expect("secret");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&secret_file, std::fs::Permissions::from_mode(0o600))
+            .expect("chmod");
+    }
     Arc::new(WebhookConfig {
         modules: ModulesConfig {
             enabled: vec![Module::Peer],
@@ -159,15 +167,102 @@ fn peer_config(dir: &Path, name: &str, relay_url: &str, pin: String) -> Arc<Webh
         keys: Vec::new(),
         tokens: Vec::new(),
         peer: Some(PeerConfig {
-            api_url: relay_url.to_owned(),
             api_secret_file: Some(secret_file),
-            api_fp: None,
+            ..PeerConfig::new(relay_url)
         }),
         history: None,
 
         voice: Default::default(),
         music: None,
     })
+}
+
+/// Registers each bot's certificate, as an admin would for the people allowed to use the relay.
+async fn register(bots: &[&Bot]) -> Vec<u32> {
+    let mut ids = Vec::new();
+    for bot in bots {
+        bot.register().await.expect("self-register");
+        ids.push(
+            bot.own_user()
+                .expect("own user")
+                .user_id
+                .expect("registered"),
+        );
+    }
+    ids
+}
+
+async fn send_hello(bot: u32, clients: &[&Bot]) {
+    let hello = br#"{"app":"mumcord","v":1,"features":["p2p"]}"#.to_vec();
+    for client in clients {
+        client
+            .handle()
+            .send_plugin_data(&[bot], "mumcord.hello", hello.clone())
+            .expect("hello");
+    }
+}
+
+fn request_token(from: &Bot, bot: u32, peer: u32) {
+    let request = format!(r#"{{"v":1,"t":"token-req","rid":"0123456789abcdef","peer":{peer}}}"#);
+    from.handle()
+        .send_plugin_data(&[bot], "mumcord.peer", request.into_bytes())
+        .expect("token request");
+}
+
+/// Writes the ACL of `channel` as `SuperUser` and returns once the server answers a query with
+/// it, so it is in effect.
+async fn write_acl(
+    superuser: &Bot,
+    channel: u32,
+    groups: Vec<proto::acl::ChanGroup>,
+    acls: Vec<proto::acl::ChanAcl>,
+) {
+    let mut events = superuser.subscribe();
+    superuser
+        .handle()
+        .send_acl(proto::Acl {
+            channel_id: channel,
+            inherit_acls: Some(true),
+            groups,
+            acls,
+            query: Some(false),
+        })
+        .expect("ACL write");
+    superuser.handle().query_acl(channel).expect("ACL query");
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Ok(Event::Acl(acl)) = events.recv().await
+                && acl.channel_id == channel
+            {
+                return;
+            }
+        }
+    })
+    .await
+    .expect("the ACL answer within 10 s");
+}
+
+/// The group `relay-users` with `members` on a channel, where everyone may read the ACL (only
+/// for the test; a real setup grants "Write ACL" to the bot's account).
+async fn relay_users(superuser: &Bot, channel: u32, members: &[u32]) {
+    let group = proto::acl::ChanGroup {
+        name: "relay-users".to_owned(),
+        inherited: Some(false),
+        inherit: Some(true),
+        inheritable: Some(true),
+        add: members.to_vec(),
+        ..Default::default()
+    };
+    let read_acl = proto::acl::ChanAcl {
+        apply_here: Some(true),
+        apply_subs: Some(false),
+        inherited: Some(false),
+        user_id: None,
+        group: Some("all".to_owned()),
+        grant: Some(permissions::WRITE),
+        deny: Some(0),
+    };
+    write_acl(superuser, channel, vec![group], vec![read_acl]).await;
 }
 
 fn session_of(bot: &Bot, name: &str) -> u32 {
@@ -247,12 +342,8 @@ async fn clients_learn_the_relay_and_a_pair_gets_a_token() {
         .await
         .expect("the peer bot logs in with the pinned server certificate");
     let bot = session_of(&alice, &bot_name);
-    let hello = br#"{"app":"mumcord","v":1,"features":["p2p"]}"#.to_vec();
-    for who in [&alice, &bob] {
-        who.handle()
-            .send_plugin_data(&[bot], "mumcord.hello", hello.clone())
-            .expect("hello");
-    }
+    register(&[&alice, &bob]).await;
+    send_hello(bot, &[&alice, &bob]).await;
     for events in [&mut alice_events, &mut bob_events] {
         assert_eq!(
             next_peer_message(events, bot).await,
@@ -263,12 +354,7 @@ async fn clients_learn_the_relay_and_a_pair_gets_a_token() {
     assert!(wait_for_call(&calls, "GET", "/v1/status").await.authorized);
 
     let bob_session = session_of(&alice, &bob_name);
-    let request =
-        format!(r#"{{"v":1,"t":"token-req","rid":"0123456789abcdef","peer":{bob_session}}}"#);
-    alice
-        .handle()
-        .send_plugin_data(&[bot], "mumcord.peer", request.into_bytes())
-        .expect("token request");
+    request_token(&alice, bot, bob_session);
     let for_alice = next_peer_message(&mut alice_events, bot).await;
     let for_bob = next_peer_message(&mut bob_events, bot).await;
     let alice_session = session_of(&bob, &alice_name);
@@ -292,6 +378,226 @@ async fn clients_learn_the_relay_and_a_pair_gets_a_token() {
 
     running.abort();
     alice.disconnect().await.expect("alice leaves");
+}
+
+#[tokio::test]
+#[ignore = "needs testenv and MUMBOT_LIVE=1"]
+async fn guests_get_no_token_and_cannot_be_the_peer() {
+    if !live() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (relay_url, calls) = mock_relay().await;
+    let (alice_name, guest_name, bot_name) = (unique("alice"), unique("guest"), unique("peerbot"));
+    let alice = Bot::connect(client(dir.path(), &alice_name))
+        .await
+        .expect("alice");
+    let guest = Bot::connect(client(dir.path(), &guest_name))
+        .await
+        .expect("guest");
+    let (mut alice_events, mut guest_events) = (alice.subscribe(), guest.subscribe());
+    let running = tokio::spawn(modules::run(
+        peer_config(dir.path(), &bot_name, &relay_url, server_pin()),
+        VoiceSettings::default(),
+    ));
+    alice
+        .wait_user(&bot_name, &UserCheck::default())
+        .await
+        .expect("the peer bot logs in");
+    let bot = session_of(&alice, &bot_name);
+    register(&[&alice]).await;
+    send_hello(bot, &[&alice, &guest]).await;
+    for events in [&mut alice_events, &mut guest_events] {
+        assert_eq!(next_peer_message(events, bot).await["t"], "relay");
+    }
+
+    request_token(&guest, bot, session_of(&guest, &alice_name));
+    assert_eq!(
+        next_peer_message(&mut guest_events, bot).await,
+        serde_json::json!({"v":1,"t":"token-err","rid":"0123456789abcdef","r":"denied"}),
+        "an unregistered requester is refused"
+    );
+    request_token(&alice, bot, session_of(&alice, &guest_name));
+    assert_eq!(
+        next_peer_message(&mut alice_events, bot).await["r"],
+        "denied",
+        "an unregistered peer is refused"
+    );
+    assert!(
+        !calls
+            .lock()
+            .expect("lock")
+            .iter()
+            .any(|c| c.path == "/v1/pairs"),
+        "the relay is never asked"
+    );
+
+    running.abort();
+    alice.disconnect().await.expect("alice leaves");
+    guest.disconnect().await.expect("guest leaves");
+}
+
+#[tokio::test]
+#[ignore = "needs testenv and MUMBOT_LIVE=1"]
+async fn only_members_of_the_allowed_groups_get_tokens() {
+    if !live() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (relay_url, calls) = mock_relay().await;
+    let names = [unique("alice"), unique("bob"), unique("carol")];
+    let bot_name = unique("peerbot");
+    let mut people = Vec::new();
+    for name in &names {
+        people.push(
+            Bot::connect(client(dir.path(), name))
+                .await
+                .expect("client"),
+        );
+    }
+    let [alice, bob, carol] = &people[..] else {
+        unreachable!()
+    };
+    let ids = register(&[alice, bob, carol]).await;
+    let superuser = Bot::connect(BotConfig::superuser(env::test_port()))
+        .await
+        .expect("superuser");
+    let channel = superuser.channel_id("Raid").expect("Raid");
+    relay_users(&superuser, channel, &ids[..2]).await;
+
+    let mut config =
+        Arc::unwrap_or_clone(peer_config(dir.path(), &bot_name, &relay_url, server_pin()));
+    let peer = config.peer.as_mut().expect("peer");
+    peer.allowed_groups = vec!["relay-users".to_owned()];
+    peer.groups_channel = Some("Raid".to_owned());
+    let mut alice_events = alice.subscribe();
+    let running = tokio::spawn(modules::run(Arc::new(config), VoiceSettings::default()));
+    alice
+        .wait_user(&bot_name, &UserCheck::default())
+        .await
+        .expect("the peer bot logs in and reads the groups");
+    let bot = session_of(alice, &bot_name);
+    send_hello(bot, &[alice, bob, carol]).await;
+    assert_eq!(
+        next_peer_message(&mut alice_events, bot).await["t"],
+        "relay"
+    );
+
+    request_token(alice, bot, session_of(alice, &names[2]));
+    assert_eq!(
+        next_peer_message(&mut alice_events, bot).await["r"],
+        "denied",
+        "Carol is registered but no member"
+    );
+    request_token(alice, bot, session_of(alice, &names[1]));
+    assert_eq!(
+        next_peer_message(&mut alice_events, bot).await["t"],
+        "token"
+    );
+
+    // Bob leaves the group: the next read drops his certificate at the relay.
+    relay_users(&superuser, channel, &ids[..1]).await;
+    request_token(alice, bot, session_of(alice, &names[1]));
+    assert_eq!(
+        next_peer_message(&mut alice_events, bot).await["r"],
+        "denied"
+    );
+    let bob_cert = cert_of(bob);
+    wait_for_call(&calls, "DELETE", &format!("/v1/peers/{bob_cert}")).await;
+
+    running.abort();
+    write_acl(&superuser, channel, Vec::new(), Vec::new()).await;
+    superuser.disconnect().await.expect("superuser leaves");
+    for bot in people {
+        bot.disconnect().await.expect("leaves");
+    }
+}
+
+#[tokio::test]
+#[ignore = "needs testenv and MUMBOT_LIVE=1"]
+async fn groups_without_the_write_acl_permission_refuse_to_start() {
+    if !live() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (relay_url, _) = mock_relay().await;
+    let mut config = Arc::unwrap_or_clone(peer_config(
+        dir.path(),
+        &unique("peerbot"),
+        &relay_url,
+        server_pin(),
+    ));
+    config.peer.as_mut().expect("peer").allowed_groups = vec!["relay-users".to_owned()];
+    let result = tokio::time::timeout(
+        Duration::from_secs(20),
+        modules::run(Arc::new(config), VoiceSettings::default()),
+    )
+    .await
+    .expect("fails fast");
+    let error = format!("{:#}", result.expect_err("refused"));
+    assert!(error.contains("Write ACL"), "{error}");
+}
+
+#[tokio::test]
+#[ignore = "needs testenv and MUMBOT_LIVE=1"]
+async fn a_certificate_is_dropped_when_its_last_session_leaves() {
+    if !live() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (relay_url, calls) = mock_relay().await;
+    let (first_name, second_name, observer_name, bot_name) = (
+        unique("dev1"),
+        unique("dev2"),
+        unique("observer"),
+        unique("peerbot"),
+    );
+    // Two devices of one person: the same certificate under two names.
+    let device = |name: &str| BotConfig {
+        cert_name: Some(first_name.clone()),
+        ..client(dir.path(), name)
+    };
+    let first = Bot::connect(device(&first_name)).await.expect("first");
+    let second = Bot::connect(device(&second_name)).await.expect("second");
+    let observer = Bot::connect(client(dir.path(), &observer_name))
+        .await
+        .expect("observer");
+    let mut observer_events = observer.subscribe();
+    let running = tokio::spawn(modules::run(
+        peer_config(dir.path(), &bot_name, &relay_url, server_pin()),
+        VoiceSettings::default(),
+    ));
+    observer
+        .wait_user(&bot_name, &UserCheck::default())
+        .await
+        .expect("the peer bot logs in");
+    let bot = session_of(&observer, &bot_name);
+    let cert = cert_of(&first);
+    assert_eq!(cert, cert_of(&second), "one certificate");
+    send_hello(bot, &[&first, &second]).await;
+
+    first.disconnect().await.expect("first leaves");
+    observer
+        .wait_user_gone(&first_name)
+        .await
+        .expect("first is gone");
+    // The bot handles events in order: once it answers this hello, it saw the first one leave.
+    send_hello(bot, &[&observer]).await;
+    assert_eq!(
+        next_peer_message(&mut observer_events, bot).await["t"],
+        "relay"
+    );
+    let path = format!("/v1/peers/{cert}");
+    assert!(
+        !calls.lock().expect("lock").iter().any(|c| c.path == path),
+        "the second device keeps the certificate"
+    );
+
+    second.disconnect().await.expect("second leaves");
+    wait_for_call(&calls, "DELETE", &path).await;
+
+    running.abort();
+    observer.disconnect().await.expect("observer leaves");
 }
 
 #[tokio::test]
