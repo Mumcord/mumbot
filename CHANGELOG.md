@@ -4,6 +4,16 @@ All notable changes to Mumbot are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Every module: the bot answers a Mumcord client's hello with its own `mumcord.hello` that says
+  it is a bot, which one and which modules it runs:
+  `{"app":"mumcord","v":1,"features":[],"bot":{"name":"mumbot","version":…,"modules":[…]}}`, to
+  that client only, at most once every 10 seconds per client. Until now the bot never sent a
+  hello. See `docs/modules.md`.
+
 ## [0.3.0] - 2026-11-01
 
 ### Added

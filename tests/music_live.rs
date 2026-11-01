@@ -4,7 +4,7 @@
 //! Checks the acceptance criteria of `specs/05-music-specification.md` in the running bot:
 //! AC-4.1 a played file is heard by another user, AC-4.2 queue, skip and stop, AC-4.3 refused
 //! requests, AC-4.4 music and webhook on one connection, AC-4.5 the configured bitrate; and the
-//! plugin announce `mumbot-music@1` to Mumcord clients whose hello lists `plugins` (task M2b).
+//! bot's own hello (`bot` object) in answer to a Mumcord client's hello.
 
 #![cfg(feature = "tester")]
 
@@ -251,8 +251,8 @@ async fn music_is_heard_and_controlled_over_http() -> Result<()> {
     listener.disconnect().await
 }
 
-/// The next `mumcord.plugins` message from `from` within `wait`, as JSON.
-async fn next_announce(
+/// The next `mumcord.hello` from `from` within `wait`, as JSON.
+async fn next_hello(
     events: &mut broadcast::Receiver<Event>,
     from: u32,
     wait: Duration,
@@ -261,7 +261,7 @@ async fn next_announce(
         loop {
             if let Ok(Event::PluginData(data)) = events.recv().await
                 && data.sender == Some(from)
-                && data.data_id == "mumcord.plugins"
+                && data.data_id == "mumcord.hello"
             {
                 return serde_json::from_slice(&data.data).expect("json");
             }
@@ -273,7 +273,7 @@ async fn next_announce(
 
 #[tokio::test]
 #[ignore = "needs testenv and MUMBOT_LIVE=1"]
-async fn the_music_bot_announces_its_plugin_to_mumcord_clients() -> Result<()> {
+async fn the_bot_answers_a_mumcord_hello_with_its_own() -> Result<()> {
     if !live() {
         return Ok(());
     }
@@ -305,34 +305,39 @@ async fn the_music_bot_announces_its_plugin_to_mumcord_clients() -> Result<()> {
         .map(|u| u.session)
         .expect("music bot is online");
     let (mut alice_events, mut old_events) = (alice.subscribe(), old.subscribe());
-    let hello = |features: &str| {
-        format!(r#"{{"app":"mumcord","v":1,"features":[{features}]}}"#).into_bytes()
-    };
+    let hello = br#"{"app":"mumcord","v":1,"features":["p2p","plugins"]}"#;
     alice
         .handle()
-        .send_plugin_data(&[bot], "mumcord.hello", hello(r#""p2p","plugins""#))?;
-    old.handle()
-        .send_plugin_data(&[bot], "mumcord.hello", hello(r#""p2p""#))?;
+        .send_plugin_data(&[bot], "mumcord.hello", hello.to_vec())?;
 
     let wait = Duration::from_secs(5);
     assert_eq!(
-        next_announce(&mut alice_events, bot, wait).await,
-        Some(serde_json::json!({"v": 1, "p": ["mumbot-music@1"]})),
-        "official entry, no source suffix"
+        next_hello(&mut alice_events, bot, wait).await,
+        Some(serde_json::json!({
+            "app": "mumcord",
+            "v": 1,
+            "features": [],
+            "bot": {"name": "mumbot", "version": env!("CARGO_PKG_VERSION"), "modules": ["webhook", "music"]},
+        })),
+        "the bot says it is mumbot and which modules it runs"
     );
-    let announced = Instant::now();
-    assert_eq!(next_announce(&mut old_events, bot, wait).await, None);
+    let greeted = Instant::now();
+    assert_eq!(
+        next_hello(&mut old_events, bot, wait).await,
+        None,
+        "a client that sent no hello gets none"
+    );
 
     // A second hello within 10 s is answered only once the interval has passed.
     alice
         .handle()
-        .send_plugin_data(&[bot], "mumcord.hello", hello(r#""plugins""#))?;
+        .send_plugin_data(&[bot], "mumcord.hello", hello.to_vec())?;
     assert!(
-        next_announce(&mut alice_events, bot, Duration::from_secs(15))
+        next_hello(&mut alice_events, bot, Duration::from_secs(15))
             .await
             .is_some()
     );
-    assert!(announced.elapsed() >= Duration::from_secs(9), "throttled");
+    assert!(greeted.elapsed() >= Duration::from_secs(9), "throttled");
 
     running.abort();
     old.disconnect().await?;
