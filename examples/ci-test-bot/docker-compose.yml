@@ -30,7 +30,7 @@ services:
   # The test bot is only in the tester image; the main image ghcr.io/mumcord/mumbot answers test
   # commands with a pointer to it. The tag is pinned; change it when you upgrade.
   bot:
-    image: ghcr.io/mumcord/mumbot-tester:0.2.1
+    image: ghcr.io/mumcord/mumbot-tester:0.3.0
     entrypoint: ["mumbot", "--host", "mumble-server", "--port", "64738"]
     # Every run is one short step, never a service to keep alive.
     restart: "no"
