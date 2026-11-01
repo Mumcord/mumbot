@@ -33,16 +33,17 @@ pub struct PeerConfig {
     /// Allows plain `http` to a relay API on another host, which sends the secret in clear text.
     #[serde(default)]
     pub allow_insecure_http: bool,
-    /// Mumble groups whose members may get relay tokens; empty means every registered user.
-    #[serde(default)]
-    pub allowed_groups: Vec<String>,
-    /// Channel whose ACL defines `allowed_groups`; the root channel when unset.
-    #[serde(default)]
-    pub groups_channel: Option<String>,
+    /// Only registered users get relay tokens; off lets guests use the relay too.
+    #[serde(default = "default_registered_only")]
+    pub registered_only: bool,
     #[serde(default = "default_cert_requests_per_minute")]
     pub cert_requests_per_minute: usize,
     #[serde(default = "default_max_pairs_per_cert")]
     pub max_pairs_per_cert: usize,
+}
+
+fn default_registered_only() -> bool {
+    true
 }
 
 fn default_cert_requests_per_minute() -> usize {
@@ -144,8 +145,7 @@ impl PeerConfig {
             api_secret_file: None,
             api_fp: None,
             allow_insecure_http: false,
-            allowed_groups: Vec::new(),
-            groups_channel: None,
+            registered_only: true,
             cert_requests_per_minute: CERT_REQUESTS_PER_MINUTE,
             max_pairs_per_cert: MAX_PAIRS_PER_CERT,
         }
@@ -169,13 +169,6 @@ impl PeerConfig {
         }
         if self.cert_requests_per_minute == 0 || self.max_pairs_per_cert == 0 {
             bail!("peer: cert_requests_per_minute and max_pairs_per_cert must be at least 1");
-        }
-        if self
-            .allowed_groups
-            .iter()
-            .any(|group| group.trim().is_empty())
-        {
-            bail!("peer: allowed_groups has an empty group name");
         }
         Ok(())
     }
@@ -362,18 +355,13 @@ mod tests {
     }
 
     #[test]
-    fn limits_and_groups_are_checked() {
+    fn limits_are_checked_and_defaults_apply() {
         let mut bad = config("http://127.0.0.1:7480", None);
         bad.max_pairs_per_cert = 0;
         assert!(bad.validate().is_err());
-        let mut bad = config("http://127.0.0.1:7480", None);
-        bad.allowed_groups = vec![" ".into()];
-        assert!(bad.validate().is_err());
-        let parsed: PeerConfig = toml::from_str(
-            "api_url = \"http://127.0.0.1:7480\"\nallowed_groups = [\"relay-users\"]\n",
-        )
-        .expect("toml");
-        assert_eq!(parsed.allowed_groups, vec!["relay-users".to_owned()]);
+        let parsed: PeerConfig =
+            toml::from_str("api_url = \"http://127.0.0.1:7480\"\n").expect("toml");
+        assert!(parsed.registered_only, "on by default");
         assert_eq!(parsed.cert_requests_per_minute, CERT_REQUESTS_PER_MINUTE);
         assert_eq!(parsed.max_pairs_per_cert, MAX_PAIRS_PER_CERT);
     }

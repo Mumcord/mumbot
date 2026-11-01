@@ -1,6 +1,5 @@
 //! Live view of the bot for the HTTP handler: connection state, live channel tree, delivery.
 
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -19,8 +18,6 @@ use crate::{Bot, Module};
 
 /// Wait between reconnect attempts (FR-1.1).
 const RECONNECT_DELAY: Duration = Duration::from_secs(2);
-/// Longest wait for the server's answer to an ACL query (peer module groups).
-const ACL_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The bot behind a mutex, so several requests can use the one connection (Q3.6).
 pub struct BotApi {
@@ -240,56 +237,6 @@ impl Link for Arc<BotApi> {
                 .filter_map(|user| Some((user.session, user.user_id?)))
                 .collect(),
         })
-    }
-
-    async fn group_members(
-        &self,
-        channel: Option<&str>,
-        groups: &[String],
-    ) -> Result<HashSet<u32>> {
-        // Subscribed before the query, so the answer cannot slip past.
-        let mut events = self.subscribe();
-        let channel_id = {
-            let guard = self.bot.lock().await;
-            let bot = guard
-                .as_ref()
-                .filter(|bot| bot.handle().is_connected())
-                .ok_or_else(|| anyhow::anyhow!("bot is not connected"))?;
-            let channel_id = match channel {
-                Some(name) => bot.channel_id(name)?,
-                None => 0,
-            };
-            bot.handle().query_acl(channel_id)?;
-            channel_id
-        };
-        let answer = tokio::time::timeout(ACL_TIMEOUT, async {
-            loop {
-                match events.recv().await {
-                    Ok(Event::Acl(acl)) if acl.channel_id == channel_id => return Ok(acl),
-                    Ok(Event::PermissionDenied(denied))
-                        if denied.channel_id == Some(channel_id)
-                            && denied.permission == Some(permissions::WRITE) =>
-                    {
-                        anyhow::bail!(
-                            "peer: the bot may not read the ACL of channel {channel_id}: grant it \
-                             the \"Write ACL\" permission there"
-                        );
-                    }
-                    Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(broadcast::error::RecvError::Closed) => {
-                        anyhow::bail!("bot is not connected")
-                    }
-                }
-            }
-        })
-        .await
-        .map_err(|_| {
-            anyhow::anyhow!(
-                "peer: no ACL answer within {} s for channel {channel_id}",
-                ACL_TIMEOUT.as_secs()
-            )
-        })??;
-        crate::peer::groups::members(&answer, groups)
     }
 
     async fn send(&self, receivers: &[u32], data: Vec<u8>) -> Result<()> {
