@@ -37,7 +37,7 @@ file holds the connection); only `--bitrate` and `--frame-ms` apply to them.
 | `--frame-ms <MS>` | `20` | Voice packet length, `10` or `20`; also `MUMBOT_VOICE_FRAME_MS`. |
 | `--hold <HOLD>` | `0` | Seconds to stay connected after the command(s) before exiting. Not after a failed command. |
 | `-h`, `--help` | | Print help. |
-| `-V`, `--version` | | Print the version (`mumbot 0.3.0`). |
+| `-V`, `--version` | | Print the version (`mumbot 0.4.0`). |
 
 - Certificates are generated once per name and kept in `MUMBOT_DATA`, else `MUMCORD_BOT_DATA`,
   else `$XDG_DATA_HOME/mumbot` (usually `~/.local/share/mumbot`).

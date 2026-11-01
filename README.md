@@ -98,7 +98,7 @@ chmod 644 bot.toml
 
 docker run -d --name mumbot -p 127.0.0.1:8080:8080 \
   -v "$PWD/bot.toml:/config/bot.toml:ro" -v mumbot-data:/data \
-  ghcr.io/mumcord/mumbot:0.3.0
+  ghcr.io/mumcord/mumbot:0.4.0
 ```
 
 ```bash
@@ -114,9 +114,9 @@ standard Mumble server next to the bot with one `docker compose up`.
 ### Main build, binary
 
 ```bash
-curl -LO https://github.com/Mumcord/mumbot/releases/download/v0.3.0/mumbot-0.3.0-linux-x86_64.tar.gz
-curl -LO https://github.com/Mumcord/mumbot/releases/download/v0.3.0/SHA256SUMS
-sha256sum -c SHA256SUMS --ignore-missing && tar xzf mumbot-0.3.0-linux-x86_64.tar.gz
+curl -LO https://github.com/Mumcord/mumbot/releases/download/v0.4.0/mumbot-0.4.0-linux-x86_64.tar.gz
+curl -LO https://github.com/Mumcord/mumbot/releases/download/v0.4.0/SHA256SUMS
+sha256sum -c SHA256SUMS --ignore-missing && tar xzf mumbot-0.4.0-linux-x86_64.tar.gz
 ./mumbot webhook --config bot.toml
 ```
 
