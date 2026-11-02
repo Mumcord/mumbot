@@ -36,7 +36,7 @@ mumcord-p2p = "0.5"
 # Music module: pure-Rust MP3 decoding (MPL-2.0) that builds statically everywhere, a real-time
 # safe ring buffer between the decode thread and the voice sender, and Mozilla's root store for
 # https sources (the Alpine image has no reliable system store).
-symphonia = { version = "0.5", default-features = false, features = ["mp3"] }
+symphonia = { version = "0.6", default-features = false, features = ["mp3"] }
 rtrb = "0.4"
 webpki-roots = "1"
 # History module: the recorded messages in one local file, like Mumcord's own store. Bundled,
