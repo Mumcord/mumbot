@@ -126,6 +126,66 @@ jobs:
         if: always()
         run: testenv/down.sh
 
+  # Broadcast admission (tests/peer_broadcast_live.rs) against a real mumpeer relay and a Mumble
+  # server, both from the mumpeer repository's testenv/. The peer bot runs inside the test, so
+  # the testenv starts without its own bot (--no-bot). The suite runs once per relay profile
+  # because each test skips itself when the running profile is not its own.
+  # To bump mumpeer: set MUMPEER_REF below to a newer commit of Mumcord/mumpeer main
+  # (`git ls-remote https://github.com/Mumcord/mumpeer refs/heads/main`).
+  peer-live:
+    name: Peer relay live tests
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      MUMPEER_REF: c42aa1072cfec9b4d06d2853e459af44ad8bdf92
+      MUMBOT_LIVE: "1"
+      MUMBOT_PEER_RELAY: "1"
+      MUMBOT_PORT_BASE: "44758"
+      MUMBOT_TESTENV_DIR: ${{ github.workspace }}/mumpeer/testenv
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/checkout@v7
+        with:
+          repository: Mumcord/mumpeer
+          ref: ${{ env.MUMPEER_REF }}
+          path: mumpeer
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build tests
+        run: cargo test --locked --features tester --test peer_broadcast_live --no-run
+
+      - name: Run with relay profile all
+        run: |
+          MUMPEER_PROFILE=all mumpeer/testenv/up.sh --no-bot
+          cargo test --locked --features tester --test peer_broadcast_live -- --ignored --test-threads=1 --nocapture
+
+      - name: Run with relay profile no-broadcast
+        run: |
+          MUMPEER_PROFILE=no-broadcast mumpeer/testenv/up.sh --no-bot
+          cargo test --locked --features tester --test peer_broadcast_live -- --ignored --test-threads=1 --nocapture
+
+      - name: Logs on failure
+        if: failure()
+        run: |
+          cd mumpeer/testenv
+          . ./env.sh
+          docker compose logs --tail 50
+        env:
+          PUID: "1000"
+          PGID: "1000"
+          SUPERUSER_PASSWORD: x
+          MUMPEER_API_SECRET: x
+
+      - name: Stop the test environment
+        if: always()
+        run: mumpeer/testenv/down.sh
+
   docker:
     name: Docker image (${{ matrix.variant }})
     needs: changes
@@ -260,21 +320,22 @@ jobs:
   # because a skipped job would not report its name.
   result:
     name: CI result
-    needs: [changes, test, live, docker, examples, static-arm64]
+    needs: [changes, test, live, peer-live, docker, examples, static-arm64]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Check results
         run: |
-          echo "changes: $CHANGES, test: $TEST, live: $LIVE, docker: $DOCKER, examples: $EXAMPLES, static-arm64: $ARM64"
+          echo "changes: $CHANGES, test: $TEST, live: $LIVE, peer-live: $PEERLIVE, docker: $DOCKER, examples: $EXAMPLES, static-arm64: $ARM64"
           ok() { [ "$1" = success ] || [ "$1" = skipped ]; }
-          [ "$CHANGES" = success ] && ok "$TEST" && ok "$LIVE" && ok "$DOCKER" && ok "$EXAMPLES" \
+          [ "$CHANGES" = success ] && ok "$TEST" && ok "$LIVE" && ok "$PEERLIVE" && ok "$DOCKER" && ok "$EXAMPLES" \
             && ok "$ARM64"
         env:
           CHANGES: ${{ needs.changes.result }}
           TEST: ${{ needs.test.result }}
           LIVE: ${{ needs.live.result }}
+          PEERLIVE: ${{ needs.peer-live.result }}
           DOCKER: ${{ needs.docker.result }}
           EXAMPLES: ${{ needs.examples.result }}
           ARM64: ${{ needs.static-arm64.result }}
