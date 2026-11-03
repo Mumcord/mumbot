@@ -14,6 +14,7 @@ All notable changes to Mumbot are listed here. The format follows
 ### Changed
 
 - The peer module now builds against the unreleased Mumcord crates from Git until `mumcord-p2p` 0.7.0 is published.
+- Updated the MP3 decoder library (symphonia) to 0.6.
 
 ## [0.4.1] - 2026-11-01
 
