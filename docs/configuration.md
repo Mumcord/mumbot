@@ -68,7 +68,9 @@ that key's channels. The peer bot ignores this section.
 
 Passwords belong to a channel, not to a key. The bot presents every listed password to the
 server at login (Mumble access tokens), so channels that need one become writable. `[[tokens]]`
-is accepted as well.
+is accepted as well. The history module also uses them: with at least one password, it shares a
+locked channel's history only after the requester's password proof (see
+[history.md](history.md#locked-channels)).
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
