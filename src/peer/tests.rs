@@ -27,6 +27,7 @@ enum PairAnswer {
     Ok,
     Full,
     RateLimited,
+    UseNotAllowed,
     Fail,
 }
 
@@ -34,6 +35,7 @@ struct MockRelay {
     status: Mutex<Option<Status>>,
     pair_answer: Mutex<PairAnswer>,
     pairs: Mutex<Vec<(String, String)>>,
+    pair_uses: Mutex<Vec<RelayUse>>,
     removed: Mutex<Vec<String>>,
 }
 
@@ -45,7 +47,8 @@ impl RelayApi for Arc<MockRelay> {
         }
     }
 
-    async fn create_pair(&self, a: &str, b: &str) -> Result<Pair, PairError> {
+    async fn create_pair(&self, a: &str, b: &str, relay_use: RelayUse) -> Result<Pair, PairError> {
+        self.pair_uses.lock().expect("lock").push(relay_use);
         self.pairs
             .lock()
             .expect("lock")
@@ -57,6 +60,7 @@ impl RelayApi for Arc<MockRelay> {
             }),
             PairAnswer::Full => Err(PairError::Full),
             PairAnswer::RateLimited => Err(PairError::RateLimited),
+            PairAnswer::UseNotAllowed => Err(PairError::UseNotAllowed),
             PairAnswer::Fail => Err(PairError::Unavailable(anyhow::anyhow!("down"))),
         }
     }
@@ -106,6 +110,8 @@ fn status(boot_id: &str) -> Status {
         udp: 443,
         tcp: 443,
         fp: "ab".repeat(32),
+        uses: None,
+        broadcast: None,
     }
 }
 
@@ -131,6 +137,7 @@ fn setup_with(rules: Rules) -> Setup {
         status: Mutex::new(Some(status("one"))),
         pair_answer: Mutex::new(PairAnswer::Ok),
         pairs: Mutex::default(),
+        pair_uses: Mutex::default(),
         removed: Mutex::default(),
     });
     let link = Arc::new(MockLink::default());
@@ -179,6 +186,15 @@ fn request(sender: u32, peer: u32) -> Event {
         sender,
         "mumcord.peer",
         format!(r#"{{"v":1,"t":"token-req","rid":"{RID}","peer":{peer}}}"#).as_bytes(),
+    )
+}
+
+fn request_for(sender: u32, peer: u32, relay_use: &str) -> Event {
+    plugin(
+        sender,
+        "mumcord.peer",
+        format!(r#"{{"v":1,"t":"token-req","rid":"{RID}","peer":{peer},"use":"{relay_use}"}}"#)
+            .as_bytes(),
     )
 }
 
@@ -485,4 +501,83 @@ async fn open_pairs_are_capped_per_certificate() {
     s.peer.on_event(removed(BOB, cert("b1")), now).await;
     s.peer.on_event(request(ALICE, CAROL), now).await;
     assert_eq!(s.link.take_sent()[0].1["t"], "token", "Bob's pair ended");
+}
+
+#[tokio::test]
+async fn the_relays_uses_and_broadcast_limit_go_into_the_announcement() {
+    let mut s = setup();
+    let mut limited = status("one");
+    limited.uses = Some(vec!["screen_share".into(), "images".into()]);
+    limited.broadcast = Some(BroadcastStatus { max_viewers: 25 });
+    *s.relay.status.lock().expect("lock") = Some(limited);
+    s.peer.on_event(hello(ALICE), Instant::now()).await;
+    s.peer.check_status().await;
+    let sent = s.link.take_sent();
+    assert_eq!(sent[0].1["u"], serde_json::json!(["img", "scr"]));
+    assert_eq!(sent[0].1["bc"], 25);
+    assert_eq!(sent[0].1["seq"], 1);
+}
+
+#[tokio::test]
+async fn a_relay_without_uses_or_broadcasts_announces_neither() {
+    let mut s = ready().await;
+    s.peer.check_status().await;
+    s.peer.on_event(hello(CAROL), Instant::now()).await;
+    let sent = s.link.take_sent();
+    assert!(sent[0].1.get("u").is_none());
+    assert!(sent[0].1.get("bc").is_none());
+}
+
+#[tokio::test]
+async fn a_changed_use_list_or_broadcast_limit_is_announced_to_all() {
+    let mut s = ready().await;
+    let mut changed = status("one");
+    changed.uses = Some(vec!["files".into()]);
+    *s.relay.status.lock().expect("lock") = Some(changed.clone());
+    s.peer.check_status().await;
+    let sent = s.link.take_sent();
+    assert_eq!(sent[0].0, vec![ALICE, BOB]);
+    assert_eq!(sent[0].1["u"], serde_json::json!(["file"]));
+
+    changed.broadcast = Some(BroadcastStatus { max_viewers: 10 });
+    *s.relay.status.lock().expect("lock") = Some(changed);
+    s.peer.check_status().await;
+    let sent = s.link.take_sent();
+    assert_eq!(sent[0].1["bc"], 10);
+    assert_eq!(sent[0].1["seq"], 3);
+}
+
+#[tokio::test]
+async fn the_requested_use_reaches_the_relay_and_a_missing_one_means_screen_share() {
+    let mut s = ready().await;
+    let now = Instant::now();
+    s.peer.on_event(request_for(ALICE, BOB, "file"), now).await;
+    s.peer.on_event(request_for(ALICE, BOB, "img"), now).await;
+    s.peer.on_event(request_for(ALICE, BOB, "scr"), now).await;
+    s.peer.on_event(request(ALICE, BOB), now).await;
+    assert_eq!(
+        *s.relay.pair_uses.lock().expect("lock"),
+        vec![
+            RelayUse::Files,
+            RelayUse::Images,
+            RelayUse::ScreenShare,
+            RelayUse::ScreenShare
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_use_the_relay_refuses_is_answered_with_use_not_allowed() {
+    let mut s = ready().await;
+    *s.relay.pair_answer.lock().expect("lock") = PairAnswer::UseNotAllowed;
+    s.peer
+        .on_event(request_for(ALICE, BOB, "file"), Instant::now())
+        .await;
+    let sent = s.link.take_sent();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].0, vec![ALICE]);
+    assert_eq!(
+        sent[0].1,
+        serde_json::json!({"v":1,"t":"token-err","rid":RID,"r":"use-not-allowed"})
+    );
 }

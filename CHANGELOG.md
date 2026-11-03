@@ -4,6 +4,17 @@ All notable changes to Mumbot are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- The peer module announces which uses the relay allows (images, files, screen sharing) and its broadcast viewer limit to clients.
+- Token requests carry the use they are for; the bot passes it to the relay and answers `use-not-allowed` when the relay has switched that use off. A request without a use counts as screen sharing.
+
+### Changed
+
+- The peer module now builds against the unreleased Mumcord crates from Git until `mumcord-p2p` 0.7.0 is published.
+
 ## [0.4.1] - 2026-11-01
 
 ### Changed
