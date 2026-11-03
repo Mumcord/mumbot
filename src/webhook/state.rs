@@ -239,6 +239,11 @@ impl Link for Arc<BotApi> {
                 .values()
                 .filter_map(|user| Some((user.session, user.user_id?)))
                 .collect(),
+            channels: state
+                .users
+                .values()
+                .map(|user| (user.session, user.channel_id))
+                .collect(),
         })
     }
 

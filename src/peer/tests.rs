@@ -31,8 +31,18 @@ enum PairAnswer {
     Fail,
 }
 
+/// How the mock answers the broadcast calls; `None` creates or admits.
+type BcastAnswer = Option<fn() -> BroadcastError>;
+
+const BCAST_ID: &str = "00000000000000b1";
+
 struct MockRelay {
     status: Mutex<Option<Status>>,
+    create_answer: Mutex<BcastAnswer>,
+    admit_answer: Mutex<BcastAnswer>,
+    /// Broadcast calls in order, e.g. `create a1 25`, `admit 00000000000000b1 b1`.
+    bcast_calls: Mutex<Vec<String>>,
+    next_id: Mutex<u64>,
     pair_answer: Mutex<PairAnswer>,
     pairs: Mutex<Vec<(String, String)>>,
     pair_uses: Mutex<Vec<RelayUse>>,
@@ -69,6 +79,73 @@ impl RelayApi for Arc<MockRelay> {
         self.removed.lock().expect("lock").push(hash.to_owned());
         Ok(())
     }
+
+    async fn create_broadcast(
+        &self,
+        publisher: &str,
+        max_viewers: u16,
+    ) -> Result<NewBroadcast, BroadcastError> {
+        self.call(format!("create {} {max_viewers}", short(publisher)));
+        if let Some(error) = *self.create_answer.lock().expect("lock") {
+            return Err(error());
+        }
+        let mut next = self.next_id.lock().expect("lock");
+        let id = BroadcastId(*next);
+        *next += 1;
+        Ok(NewBroadcast {
+            id,
+            tok: "P".repeat(43),
+            expires_in: 120,
+        })
+    }
+
+    async fn admit_viewer(
+        &self,
+        id: BroadcastId,
+        viewer: &str,
+    ) -> Result<ViewerToken, BroadcastError> {
+        self.call(format!(
+            "admit {} {}",
+            relay::broadcast_path_id(id),
+            short(viewer)
+        ));
+        if let Some(error) = *self.admit_answer.lock().expect("lock") {
+            return Err(error());
+        }
+        Ok(ViewerToken {
+            tok: "V".repeat(43),
+            expires_in: 60,
+        })
+    }
+
+    async fn remove_viewer(&self, id: BroadcastId, viewer: &str) -> Result<()> {
+        self.call(format!(
+            "kick {} {}",
+            relay::broadcast_path_id(id),
+            short(viewer)
+        ));
+        Ok(())
+    }
+
+    async fn delete_broadcast(&self, id: BroadcastId) -> Result<()> {
+        self.call(format!("delete {}", relay::broadcast_path_id(id)));
+        Ok(())
+    }
+}
+
+impl MockRelay {
+    fn call(&self, call: String) {
+        self.bcast_calls.lock().expect("lock").push(call);
+    }
+
+    fn take_calls(&self) -> Vec<String> {
+        std::mem::take(&mut *self.bcast_calls.lock().expect("lock"))
+    }
+}
+
+/// The name a test certificate was made from (`cert("a1")` → `a1`).
+fn short(hash: &str) -> &str {
+    hash.trim_start_matches('0')
 }
 
 #[derive(Default)]
@@ -135,6 +212,10 @@ fn guests_too() -> Rules {
 fn setup_with(rules: Rules) -> Setup {
     let relay = Arc::new(MockRelay {
         status: Mutex::new(Some(status("one"))),
+        create_answer: Mutex::new(None),
+        admit_answer: Mutex::new(None),
+        bcast_calls: Mutex::default(),
+        next_id: Mutex::new(0xb1),
         pair_answer: Mutex::new(PairAnswer::Ok),
         pairs: Mutex::default(),
         pair_uses: Mutex::default(),
@@ -159,6 +240,17 @@ fn setup_with(rules: Rules) -> Setup {
             (BOB, BOB_ID),
             (OFFICIAL, 12),
             (CAROL, CAROL_ID),
+        ]),
+        // Everyone in the root channel, Carol elsewhere.
+        channels: HashMap::from([
+            (BOT, 0),
+            (ALICE, 0),
+            (BOB, 0),
+            (OFFICIAL, 0),
+            (NO_CERT, 0),
+            (GUEST, 0),
+            (ALICE2, 0),
+            (CAROL, 5),
         ]),
     });
     let peer = Peer::new(Arc::clone(&relay), Arc::clone(&link), rules);
@@ -580,4 +672,321 @@ async fn a_use_the_relay_refuses_is_answered_with_use_not_allowed() {
         sent[0].1,
         serde_json::json!({"v":1,"t":"token-err","rid":RID,"r":"use-not-allowed"})
     );
+}
+
+fn screen_hello(sender: u32) -> Event {
+    plugin(
+        sender,
+        "mumcord.hello",
+        br#"{"app":"mumcord","v":1,"features":["p2p","screen-share"]}"#,
+    )
+}
+
+fn peer_message(sender: u32, json: &str) -> Event {
+    plugin(sender, "mumcord.peer", json.as_bytes())
+}
+
+fn bcast_req(sender: u32) -> Event {
+    peer_message(
+        sender,
+        &format!(r#"{{"v":1,"t":"bcast-req","rid":"{RID}","max":25}}"#),
+    )
+}
+
+fn admit(sender: u32, viewer: u32) -> Event {
+    peer_message(
+        sender,
+        &format!(
+            r#"{{"v":1,"t":"bcast-admit","rid":"{RID}","id":"{BCAST_ID}","viewer":{viewer}}}"#
+        ),
+    )
+}
+
+fn kick(sender: u32, viewer: u32) -> Event {
+    peer_message(
+        sender,
+        &format!(r#"{{"v":1,"t":"bcast-kick","id":"{BCAST_ID}","viewer":{viewer}}}"#),
+    )
+}
+
+fn moved(session: u32, cert_hash: Option<String>) -> Event {
+    Event::UserUpdated(UserChange {
+        user: user(session, cert_hash),
+        joined: false,
+        moved_from: Some(0),
+        actor: None,
+    })
+}
+
+fn set_channel(s: &Setup, session: u32, channel: u32) {
+    let mut users = s.link.users.lock().expect("lock");
+    users
+        .as_mut()
+        .expect("users")
+        .channels
+        .insert(session, channel);
+}
+
+/// Alice, Bob, Carol and Alice's second device can share screens; Alice runs broadcast b1.
+async fn sharing() -> Setup {
+    let mut s = setup();
+    s.peer.check_status().await;
+    let now = Instant::now();
+    for session in [ALICE, BOB, CAROL, ALICE2] {
+        s.peer.on_event(screen_hello(session), now).await;
+    }
+    s.link.take_sent();
+    s.peer.on_event(bcast_req(ALICE), now).await;
+    s.link.take_sent();
+    s.relay.take_calls();
+    s
+}
+
+fn only_error(s: &Setup, to: u32) -> String {
+    let sent = s.link.take_sent();
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0].0, vec![to]);
+    assert_eq!(sent[0].1["t"], "bcast-err");
+    assert_eq!(sent[0].1["rid"], RID);
+    sent[0].1["r"].as_str().expect("reason").to_owned()
+}
+
+#[tokio::test]
+async fn a_sharer_gets_a_broadcast_for_its_certificate() {
+    let mut s = setup();
+    s.peer.check_status().await;
+    s.peer.on_event(screen_hello(ALICE), Instant::now()).await;
+    s.link.take_sent();
+    s.peer.on_event(bcast_req(ALICE), Instant::now()).await;
+    assert_eq!(s.relay.take_calls(), vec!["create a1 25"]);
+    assert_eq!(
+        s.link.take_sent(),
+        vec![(
+            vec![ALICE],
+            serde_json::json!({"v":1,"t":"bcast","rid":RID,"id":BCAST_ID,
+                "tok":"P".repeat(43),"ttl":120})
+        )]
+    );
+    // A new share replaces the running broadcast of the same session.
+    s.peer.on_event(bcast_req(ALICE), Instant::now()).await;
+    assert_eq!(
+        s.relay.take_calls(),
+        vec!["create a1 25", "delete 00000000000000b1"]
+    );
+    assert_eq!(s.link.take_sent()[0].1["id"], "00000000000000b2");
+}
+
+#[tokio::test]
+async fn a_broadcast_needs_a_screen_sharing_registered_client_and_a_working_relay() {
+    let mut s = setup_with(Rules::default());
+    s.peer.check_status().await;
+    let now = Instant::now();
+    s.peer.on_event(hello(BOB), now).await;
+    s.peer.on_event(screen_hello(GUEST), now).await;
+    s.peer.on_event(screen_hello(NO_CERT), now).await;
+    s.peer.on_event(screen_hello(ALICE), now).await;
+    s.link.take_sent();
+    for sender in [BOB, GUEST, NO_CERT, OFFICIAL] {
+        s.peer.on_event(bcast_req(sender), now).await;
+        assert_eq!(only_error(&s, sender), "denied", "session {sender}");
+    }
+    let refusals: [(BcastAnswer, &str); 3] = [
+        (Some(|| BroadcastError::RelayFull), "relay-full"),
+        (Some(|| BroadcastError::UseNotAllowed), "use-not-allowed"),
+        (
+            Some(|| BroadcastError::Unavailable(anyhow::anyhow!("down"))),
+            "relay-down",
+        ),
+    ];
+    for (answer, reason) in refusals {
+        *s.relay.create_answer.lock().expect("lock") = answer;
+        s.peer.on_event(bcast_req(ALICE), now).await;
+        assert_eq!(only_error(&s, ALICE), reason);
+    }
+    *s.relay.create_answer.lock().expect("lock") = None;
+    *s.relay.status.lock().expect("lock") = None;
+    s.peer.check_status().await;
+    s.peer.check_status().await;
+    s.link.take_sent();
+    s.relay.take_calls();
+    s.peer.on_event(bcast_req(ALICE), now).await;
+    assert_eq!(only_error(&s, ALICE), "relay-down");
+    assert!(s.relay.take_calls().is_empty(), "a down relay is not asked");
+    // A later hello without screen-share takes the right back.
+    *s.relay.status.lock().expect("lock") = Some(status("one"));
+    s.peer.check_status().await;
+    s.peer.on_event(hello(ALICE), now).await;
+    s.link.take_sent();
+    s.peer.on_event(bcast_req(ALICE), now).await;
+    assert_eq!(only_error(&s, ALICE), "denied");
+}
+
+#[tokio::test]
+async fn an_admitted_viewer_gets_its_token_and_nobody_else_does() {
+    let mut s = sharing().await;
+    s.peer.on_event(admit(ALICE, BOB), Instant::now()).await;
+    assert_eq!(s.relay.take_calls(), vec!["admit 00000000000000b1 b1"]);
+    assert_eq!(
+        s.link.take_sent(),
+        vec![(
+            vec![BOB],
+            serde_json::json!({"v":1,"t":"bcast-tok","id":BCAST_ID,
+                "tok":"V".repeat(43),"ttl":60,"sharer":ALICE})
+        )]
+    );
+}
+
+#[tokio::test]
+async fn admissions_are_checked_before_the_relay_is_asked() {
+    let mut s = sharing().await;
+    let now = Instant::now();
+    s.peer.on_event(hello(OFFICIAL), now).await;
+    s.link.take_sent();
+    // Not the publisher (even with Alice's certificate on another device).
+    for sender in [BOB, ALICE2] {
+        s.peer.on_event(admit(sender, CAROL), now).await;
+        assert_eq!(only_error(&s, sender), "denied");
+    }
+    // Viewers that cannot take part: the bot, the sharer's own identity, offline, no
+    // certificate, no screen-share hello, a guest.
+    for viewer in [BOT, ALICE, ALICE2, 99, NO_CERT, OFFICIAL, GUEST] {
+        s.peer.on_event(admit(ALICE, viewer), now).await;
+        assert_eq!(only_error(&s, ALICE), "denied", "viewer {viewer}");
+    }
+    s.peer.on_event(admit(ALICE, CAROL), now).await;
+    assert_eq!(only_error(&s, ALICE), "not-same-channel");
+    // An unknown broadcast.
+    let other =
+        r#"{"v":1,"t":"bcast-admit","rid":"0123456789abcdef","id":"00000000000000ff","viewer":3}"#;
+    s.peer.on_event(peer_message(ALICE, other), now).await;
+    assert_eq!(only_error(&s, ALICE), "denied");
+    assert!(s.relay.take_calls().is_empty());
+}
+
+#[tokio::test]
+async fn relay_refusals_of_an_admission_are_mapped() {
+    let mut s = sharing().await;
+    let now = Instant::now();
+    *s.relay.admit_answer.lock().expect("lock") = Some(|| BroadcastError::Full);
+    s.peer.on_event(admit(ALICE, BOB), now).await;
+    assert_eq!(only_error(&s, ALICE), "full");
+    *s.relay.admit_answer.lock().expect("lock") =
+        Some(|| BroadcastError::Unavailable(anyhow::anyhow!("down")));
+    s.peer.on_event(admit(ALICE, BOB), now).await;
+    assert_eq!(only_error(&s, ALICE), "relay-down");
+    // Ended at the relay: the bot forgets it, so the next admission is refused right away.
+    *s.relay.admit_answer.lock().expect("lock") = Some(|| BroadcastError::Gone);
+    s.peer.on_event(admit(ALICE, BOB), now).await;
+    assert_eq!(only_error(&s, ALICE), "denied");
+    s.relay.take_calls();
+    s.peer.on_event(admit(ALICE, BOB), now).await;
+    assert_eq!(only_error(&s, ALICE), "denied");
+    assert!(s.relay.take_calls().is_empty());
+}
+
+#[tokio::test]
+async fn broadcast_requests_are_limited_per_session_and_minute() {
+    let mut s = sharing().await;
+    let now = Instant::now();
+    for _ in 1..BROADCAST_REQUESTS_PER_MINUTE {
+        s.peer.on_event(admit(ALICE, BOB), now).await;
+    }
+    s.link.take_sent();
+    s.peer.on_event(admit(ALICE, BOB), now).await;
+    assert_eq!(only_error(&s, ALICE), "rate-limited");
+    s.peer.on_event(bcast_req(ALICE), now).await;
+    assert_eq!(only_error(&s, ALICE), "rate-limited");
+    s.peer
+        .on_event(admit(ALICE, BOB), now + Duration::from_secs(61))
+        .await;
+    assert_eq!(s.link.take_sent()[0].1["t"], "bcast-tok");
+}
+
+#[tokio::test]
+async fn only_the_publisher_kicks_and_only_admitted_viewers() {
+    let mut s = sharing().await;
+    let now = Instant::now();
+    s.peer.on_event(admit(ALICE, BOB), now).await;
+    s.relay.take_calls();
+    s.link.take_sent();
+    s.peer.on_event(kick(BOB, BOB), now).await;
+    s.peer.on_event(kick(ALICE, CAROL), now).await;
+    assert!(s.relay.take_calls().is_empty());
+    s.peer.on_event(kick(ALICE, BOB), now).await;
+    assert_eq!(s.relay.take_calls(), vec!["kick 00000000000000b1 b1"]);
+    s.peer.on_event(kick(ALICE, BOB), now).await;
+    assert!(s.relay.take_calls().is_empty(), "already removed");
+    assert!(s.link.take_sent().is_empty(), "a kick is never answered");
+}
+
+#[tokio::test]
+async fn leaving_ends_the_broadcast_or_the_watching() {
+    let mut s = sharing().await;
+    let now = Instant::now();
+    s.peer.on_event(admit(ALICE, BOB), now).await;
+    s.relay.take_calls();
+    s.link.take_sent();
+    s.peer.on_event(removed(BOB, cert("b1")), now).await;
+    assert_eq!(s.relay.take_calls(), vec!["kick 00000000000000b1 b1"]);
+    // A new certificate is a new person to the relay.
+    let change = UserChange {
+        user: user(ALICE, cert("a9")),
+        joined: false,
+        moved_from: None,
+        actor: None,
+    };
+    s.peer.on_event(Event::UserUpdated(change), now).await;
+    assert_eq!(s.relay.take_calls(), vec!["delete 00000000000000b1"]);
+    s.peer.on_event(admit(ALICE, CAROL), now).await;
+    assert_eq!(only_error(&s, ALICE), "denied");
+}
+
+#[tokio::test]
+async fn the_publisher_leaving_deletes_its_broadcast() {
+    let mut s = sharing().await;
+    s.peer
+        .on_event(removed(ALICE, cert("a1")), Instant::now())
+        .await;
+    assert_eq!(s.relay.take_calls(), vec!["delete 00000000000000b1"]);
+}
+
+#[tokio::test]
+async fn moving_out_of_the_sharers_channel_ends_the_watching() {
+    let mut s = sharing().await;
+    let now = Instant::now();
+    s.peer.on_event(admit(ALICE, BOB), now).await;
+    s.relay.take_calls();
+    // Carol moves into the channel and is admitted too.
+    set_channel(&s, CAROL, 0);
+    s.peer.on_event(moved(CAROL, cert("c2")), now).await;
+    s.peer.on_event(admit(ALICE, CAROL), now).await;
+    s.relay.take_calls();
+    // Bob moves away.
+    set_channel(&s, BOB, 5);
+    s.peer.on_event(moved(BOB, cert("b1")), now).await;
+    assert_eq!(s.relay.take_calls(), vec!["kick 00000000000000b1 b1"]);
+    // The sharer moves to Bob: Carol stays behind and is removed.
+    set_channel(&s, ALICE, 5);
+    s.peer.on_event(moved(ALICE, cert("a1")), now).await;
+    assert_eq!(s.relay.take_calls(), vec!["kick 00000000000000b1 c2"]);
+    s.peer.on_event(admit(ALICE, BOB), now).await;
+    assert_eq!(s.link.take_sent().last().expect("sent").1["t"], "bcast-tok");
+}
+
+#[tokio::test]
+async fn a_relay_restart_or_reconnect_forgets_the_broadcasts() {
+    let mut s = sharing().await;
+    let now = Instant::now();
+    *s.relay.status.lock().expect("lock") = Some(status("two"));
+    s.peer.check_status().await;
+    s.link.take_sent();
+    s.peer.on_event(admit(ALICE, BOB), now).await;
+    assert_eq!(only_error(&s, ALICE), "denied");
+
+    let mut s = sharing().await;
+    s.peer
+        .on_event(Event::Disconnected(DisconnectReason::Closed), now)
+        .await;
+    s.peer.on_event(removed(ALICE, cert("a1")), now).await;
+    assert!(s.relay.take_calls().is_empty());
 }

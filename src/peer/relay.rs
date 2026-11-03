@@ -6,9 +6,14 @@
 //! - `POST /v1/pairs` with `{"a","b","use"}` (two certificate hashes and `images|files|screen_share`)
 //!   → `201 {"tok","expires_in"}`, `403` when the use is disabled, `503` when the relay is
 //!   full, `429` when the bot asks too often
-//! - `DELETE /v1/peers/{hash}` → `204`; the relay drops the hash from all pairs
+//! - `DELETE /v1/peers/{hash}` → `204`; the relay drops the hash from all pairs and broadcasts
+//! - `POST /v1/broadcasts` with `{"publisher","max_viewers"}` → `201 {"id","tok","expires_in"}`,
+//!   `403` when screen sharing is disabled, `503` when the relay runs all broadcasts it allows
+//! - `POST /v1/broadcasts/{id}/viewers` with `{"viewer"}` → `201 {"tok","expires_in"}`, `409`
+//!   when the broadcast is full, `404` when it has ended
+//! - `DELETE /v1/broadcasts/{id}/viewers/{hash}` and `DELETE /v1/broadcasts/{id}` → `204`
 //!
-//! Three calls do not justify an HTTP library: the client below sends one request per
+//! A handful of calls do not justify an HTTP library: the client below sends one request per
 //! connection and reads the answer up to a size cap. Over `https` the relay's self-signed
 //! certificate is pinned by its SHA-256 (`api_fp`) instead of checked against authorities.
 
@@ -25,7 +30,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 
-use mumcord_p2p::RelayUse;
+use mumcord_p2p::{BroadcastId, RelayUse};
 
 use crate::peer::config::{ApiUrl, PeerConfig, Secret, normalize_sha256};
 
@@ -135,6 +140,36 @@ pub enum PairError {
     Unavailable(anyhow::Error),
 }
 
+/// A broadcast the relay created, with the publisher's token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewBroadcast {
+    pub id: BroadcastId,
+    pub tok: String,
+    pub expires_in: u64,
+}
+
+/// A viewer's token for one broadcast.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ViewerToken {
+    pub tok: String,
+    pub expires_in: u64,
+}
+
+/// Why a broadcast call got no token.
+#[derive(Debug)]
+pub enum BroadcastError {
+    /// `503` on create: the relay runs as many broadcasts as it allows (or none at all).
+    RelayFull,
+    /// `409` on admit: the broadcast has no room for another viewer.
+    Full,
+    /// `403` on create: the relay does not allow screen sharing.
+    UseNotAllowed,
+    /// `404` on admit: the broadcast has already ended at the relay.
+    Gone,
+    /// Anything else: unreachable, wrong secret, unexpected answer.
+    Unavailable(anyhow::Error),
+}
+
 pub trait RelayApi {
     fn status(&self) -> impl Future<Output = Result<Status>> + Send;
     /// Creates a token for the pair of certificate hashes `a` and `b`, for `relay_use`.
@@ -144,8 +179,48 @@ pub trait RelayApi {
         b: &str,
         relay_use: RelayUse,
     ) -> impl Future<Output = Result<Pair, PairError>> + Send;
-    /// Drops `hash` from all pairs and closes its sessions.
+    /// Drops `hash` from all pairs and broadcasts and closes its sessions.
     fn remove_peer(&self, hash: &str) -> impl Future<Output = Result<()>> + Send;
+    /// Creates a broadcast published by certificate hash `publisher` for up to `max_viewers`.
+    fn create_broadcast(
+        &self,
+        publisher: &str,
+        max_viewers: u16,
+    ) -> impl Future<Output = Result<NewBroadcast, BroadcastError>> + Send;
+    /// Admits certificate hash `viewer` to broadcast `id`; admitting again replaces the token.
+    fn admit_viewer(
+        &self,
+        id: BroadcastId,
+        viewer: &str,
+    ) -> impl Future<Output = Result<ViewerToken, BroadcastError>> + Send;
+    /// Removes `viewer` from broadcast `id`; the relay tells the publisher the viewer is gone.
+    fn remove_viewer(
+        &self,
+        id: BroadcastId,
+        viewer: &str,
+    ) -> impl Future<Output = Result<()>> + Send;
+    /// Ends broadcast `id` and closes all its links.
+    fn delete_broadcast(&self, id: BroadcastId) -> impl Future<Output = Result<()>> + Send;
+}
+
+/// 16 lowercase hex digits, as the relay names broadcasts in paths and answers.
+pub fn broadcast_path_id(id: BroadcastId) -> String {
+    format!("{:016x}", id.0)
+}
+
+fn parse_broadcast_id(text: &str) -> Option<BroadcastId> {
+    (text.len() == 16 && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+        .then(|| u64::from_str_radix(text, 16).ok())
+        .flatten()
+        .map(BroadcastId)
+}
+
+/// Certificate hashes are hex; anything else must not reach a URL path or the relay.
+fn check_hash(hash: &str, what: &str) -> Result<()> {
+    if hash.is_empty() || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+        bail!("relay API {what}: not a certificate hash");
+    }
+    Ok(())
 }
 
 /// The real API.
@@ -266,6 +341,24 @@ fn parse_answer(raw: &[u8]) -> Result<Answer> {
 }
 
 #[derive(Serialize)]
+struct BroadcastRequest<'a> {
+    publisher: &'a str,
+    max_viewers: u16,
+}
+
+#[derive(Deserialize)]
+struct BroadcastAnswer {
+    id: String,
+    tok: String,
+    expires_in: u64,
+}
+
+#[derive(Serialize)]
+struct ViewerRequest<'a> {
+    viewer: &'a str,
+}
+
+#[derive(Serialize)]
 struct PairRequest<'a> {
     a: &'a str,
     b: &'a str,
@@ -312,16 +405,94 @@ impl RelayApi for HttpRelay {
     }
 
     async fn remove_peer(&self, hash: &str) -> Result<()> {
-        // Certificate hashes are hex; anything else must not reach the URL path.
-        if hash.is_empty() || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
-            bail!("relay API peers: not a certificate hash");
-        }
+        check_hash(hash, "peers")?;
+        self.delete(&format!("/v1/peers/{hash}"), "peers").await
+    }
+
+    async fn create_broadcast(
+        &self,
+        publisher: &str,
+        max_viewers: u16,
+    ) -> Result<NewBroadcast, BroadcastError> {
+        check_hash(publisher, "broadcasts").map_err(BroadcastError::Unavailable)?;
+        let body = serde_json::to_vec(&BroadcastRequest {
+            publisher,
+            max_viewers,
+        })
+        .map_err(|e| BroadcastError::Unavailable(e.into()))?;
         let answer = self
-            .call("DELETE", &format!("/v1/peers/{hash}"), None)
+            .call("POST", "/v1/broadcasts", Some(body))
             .await
-            .context("relay API peers")?;
+            .map_err(|e| BroadcastError::Unavailable(e.context("relay API broadcasts")))?;
+        match answer.status {
+            200 | 201 => {
+                let raw: BroadcastAnswer = serde_json::from_slice(&answer.body).map_err(|e| {
+                    BroadcastError::Unavailable(anyhow!(
+                        "relay API broadcasts: invalid answer: {e}"
+                    ))
+                })?;
+                let id = parse_broadcast_id(&raw.id).ok_or_else(|| {
+                    BroadcastError::Unavailable(anyhow!("relay API broadcasts: invalid id"))
+                })?;
+                Ok(NewBroadcast {
+                    id,
+                    tok: raw.tok,
+                    expires_in: raw.expires_in,
+                })
+            }
+            403 => Err(BroadcastError::UseNotAllowed),
+            503 => Err(BroadcastError::RelayFull),
+            status => Err(BroadcastError::Unavailable(anyhow!(
+                "relay API broadcasts: HTTP {status}"
+            ))),
+        }
+    }
+
+    async fn admit_viewer(
+        &self,
+        id: BroadcastId,
+        viewer: &str,
+    ) -> Result<ViewerToken, BroadcastError> {
+        check_hash(viewer, "viewers").map_err(BroadcastError::Unavailable)?;
+        let body = serde_json::to_vec(&ViewerRequest { viewer })
+            .map_err(|e| BroadcastError::Unavailable(e.into()))?;
+        let path = format!("/v1/broadcasts/{}/viewers", broadcast_path_id(id));
+        let answer = self
+            .call("POST", &path, Some(body))
+            .await
+            .map_err(|e| BroadcastError::Unavailable(e.context("relay API viewers")))?;
+        match answer.status {
+            200 | 201 => serde_json::from_slice(&answer.body).map_err(|e| {
+                BroadcastError::Unavailable(anyhow!("relay API viewers: invalid answer: {e}"))
+            }),
+            404 => Err(BroadcastError::Gone),
+            409 => Err(BroadcastError::Full),
+            status => Err(BroadcastError::Unavailable(anyhow!(
+                "relay API viewers: HTTP {status}"
+            ))),
+        }
+    }
+
+    async fn remove_viewer(&self, id: BroadcastId, viewer: &str) -> Result<()> {
+        check_hash(viewer, "viewers")?;
+        let path = format!("/v1/broadcasts/{}/viewers/{viewer}", broadcast_path_id(id));
+        self.delete(&path, "viewers").await
+    }
+
+    async fn delete_broadcast(&self, id: BroadcastId) -> Result<()> {
+        let path = format!("/v1/broadcasts/{}", broadcast_path_id(id));
+        self.delete(&path, "broadcasts").await
+    }
+}
+
+impl HttpRelay {
+    async fn delete(&self, path: &str, what: &str) -> Result<()> {
+        let answer = self
+            .call("DELETE", path, None)
+            .await
+            .with_context(|| format!("relay API {what}"))?;
         if !(200..300).contains(&answer.status) {
-            bail!("relay API peers: HTTP {}", answer.status);
+            bail!("relay API {what}: HTTP {}", answer.status);
         }
         Ok(())
     }
@@ -434,6 +605,24 @@ mod tests {
         assert!(parse_answer(b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\n\r\n{}").is_err());
         assert!(parse_answer(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n").is_err());
         assert!(parse_answer(b"garbage").is_err());
+    }
+
+    #[test]
+    fn broadcast_ids_are_16_lowercase_hex() {
+        assert_eq!(
+            parse_broadcast_id("00000000000000ff"),
+            Some(BroadcastId(255))
+        );
+        assert_eq!(broadcast_path_id(BroadcastId(255)), "00000000000000ff");
+        for bad in [
+            "00000000000000FF",
+            "ff",
+            "00000000000000fg",
+            "000000000000000ff",
+            "../x",
+        ] {
+            assert_eq!(parse_broadcast_id(bad), None, "{bad}");
+        }
     }
 
     #[test]
