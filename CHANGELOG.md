@@ -4,6 +4,12 @@ All notable changes to Mumbot are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- Updated the MP3 decoder library (symphonia) to 0.6.
+
 ## [0.4.1] - 2026-11-01
 
 ### Changed
