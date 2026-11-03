@@ -6,6 +6,10 @@ All notable changes to Mumbot are listed here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- History module: the chat history of locked channels (a password or an ACL that restricts entering) is no longer given to people who only listen to the channel. Only people inside a locked channel get it, checked again before messages are sent. With channel passwords in the config, the bot also asks for Mumcord's password proof and answers only while the server confirms that its own password is still valid (Mumcord issue #382).
+
 ### Added
 
 - The peer module announces which uses the relay allows (images, files, screen sharing) and its broadcast viewer limit to clients.

@@ -11,7 +11,7 @@ What mumbot protects, what it does not (yet), and what an operator has to take c
 | HTTP API | Plain HTTP, loopback by default; API keys in a header, compared in constant time. |
 | Secrets in files | `bot.toml`, `.env` and certificates are git-ignored; only placeholders in the repository. |
 | Logs | Request metadata only: no keys, no passwords, no message texts. |
-| Recorded chat | Only the history bot stores messages: channel messages of the listed channels, in an owner-only SQLite file, at most 7 days ([history.md](history.md)). Never private messages or voice. |
+| Recorded chat | Only the history bot stores messages: channel messages of the listed channels, in an owner-only SQLite file, at most 7 days ([history.md](history.md)). Never private messages or voice. Locked channels are shared only with people inside them, after a password proof when the bot holds channel passwords ([history.md](history.md#locked-channels)). |
 | Docker | Non-root user (uid 10001); the examples add a read-only root filesystem, no capabilities and `no-new-privileges`. |
 
 ## API keys
