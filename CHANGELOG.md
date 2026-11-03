@@ -15,10 +15,13 @@ All notable changes to Mumbot are listed here. The format follows
 - The peer module announces which uses the relay allows (images, files, screen sharing) and its broadcast viewer limit to clients.
 - Token requests carry the use they are for; the bot passes it to the relay and answers `use-not-allowed` when the relay has switched that use off. A request without a use counts as screen sharing.
 - Screen-share broadcasts: the peer module creates a relay broadcast when a Mumcord sharer asks for one (`bcast-req`), admits the viewers the sharer lets in (`bcast-admit`) after checking that both use Mumcord with screen sharing, have a certificate, may use the relay and are in the same channel, and removes viewers on `bcast-kick`. A viewer who leaves or moves to another channel is removed at the relay, and a broadcast ends when its sharer leaves.
+- Peer bot: `allowed_groups` restricts relay tokens to the members of chosen Mumble groups ([#31](https://github.com/Mumcord/mumbot/issues/31)), with `group_channel` naming the channel whose ACL defines them; both users of a pair must be members. The bot reads the members from the server's answer to an ACL query, which a standard server gives only to people with the Write permission on that channel: without it, or with a group the channel does not define, the bot refuses to start instead of allowing everyone. Because the server never reports a change, the members are read again per token request (at most one query per 10 seconds) and every 60 seconds; someone who loses access is dropped at the relay, with its open pair and its broadcast viewings. See `docs/peer.md`.
 
 ### Changed
 
 - The peer module now builds against the unreleased Mumcord crates from Git until `mumcord-p2p` 0.7.0 is published.
+- `mumcord-protocol` updated to 0.6, which added the ACL query (`Event::Acl` and `Handle::query_acl`) that group access needs.
+- `resolve_channel` takes `Root` alone as the root channel, whatever the server calls it.
 - Updated the MP3 decoder library (symphonia) to 0.6.
 
 ## [0.4.1] - 2026-11-01

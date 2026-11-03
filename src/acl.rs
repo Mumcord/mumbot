@@ -42,6 +42,47 @@ impl Bot {
         self.set_acl(channel, Vec::new()).await
     }
 
+    /// Removes the channel's own groups and ACL entries again (back to inheriting from the parent).
+    pub async fn clear_acl(&self, channel: &str) -> Result<()> {
+        self.set_acl_with_groups(channel, Vec::new(), Vec::new())
+            .await
+    }
+
+    /// Replaces `channel`'s own groups with `groups` (name to registered member ids) and grants
+    /// `permission` to the group `for_group`. Used by the live tests that check group access
+    /// (issue #31), which needs the bot to read the server's ACLs.
+    pub async fn write_groups(
+        &self,
+        channel: &str,
+        groups: &[(&str, &[u32])],
+        permission: u32,
+        for_group: &str,
+    ) -> Result<()> {
+        let proto_groups = groups
+            .iter()
+            .map(|(name, members)| proto::acl::ChanGroup {
+                name: name.to_string(),
+                inherited: Some(false),
+                inherit: Some(true),
+                inheritable: Some(true),
+                add: members.to_vec(),
+                remove: Vec::new(),
+                inherited_members: Vec::new(),
+            })
+            .collect();
+        let grant = proto::acl::ChanAcl {
+            apply_here: Some(true),
+            apply_subs: Some(true),
+            inherited: Some(false),
+            user_id: None,
+            group: Some(for_group.to_owned()),
+            grant: Some(permission),
+            deny: Some(0),
+        };
+        self.set_acl_with_groups(channel, proto_groups, vec![grant])
+            .await
+    }
+
     /// Lets only holders of the access token `token` enter `channel` (a channel password,
     /// mumcord FR-2.78): denies "Enter" for everyone, then grants it to the token group `#<token>`.
     /// Replaces the channel's own ACL.
@@ -78,6 +119,15 @@ impl Bot {
     }
 
     async fn set_acl(&self, channel: &str, acls: Vec<proto::acl::ChanAcl>) -> Result<()> {
+        self.set_acl_with_groups(channel, Vec::new(), acls).await
+    }
+
+    async fn set_acl_with_groups(
+        &self,
+        channel: &str,
+        groups: Vec<proto::acl::ChanGroup>,
+        acls: Vec<proto::acl::ChanAcl>,
+    ) -> Result<()> {
         if !self.config().superuser {
             bail!("changing ACLs needs the superuser bot");
         }
@@ -85,7 +135,7 @@ impl Bot {
         let acl = proto::Acl {
             channel_id,
             inherit_acls: Some(true),
-            groups: Vec::new(),
+            groups,
             acls,
             query: Some(false),
         };

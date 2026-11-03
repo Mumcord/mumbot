@@ -69,8 +69,8 @@ flowchart LR
   `history` and `plugins` modules talk to Mumcord clients with plugin data, which official Mumble
   clients ignore.
 - The bot itself never relays voice. mumpeer does that, and only for Mumcord clients that ask for it.
-  Only registered users get relay tokens (`[peer] registered_only`, on by default); see
-  [docs/peer.md](docs/peer.md#who-gets-tokens).
+  Only registered users get relay tokens (`[peer] registered_only`, on by default), or only the
+  members of `allowed_groups` when you configure them; see [docs/peer.md](docs/peer.md#who-gets-tokens).
 - The tester build belongs in CI, next to a throwaway server, never on a production server.
 
 ## Quick start

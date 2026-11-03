@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use mumcord_protocol::{Event, Handle, ServerState, TextTarget, permissions};
+use mumcord_protocol::{DenyKind, Event, Handle, ServerState, TextTarget, permissions};
 use tokio::sync::{Mutex, broadcast};
 
 use crate::bot::BROADCAST_CAPACITY;
@@ -12,7 +12,7 @@ use crate::checks::resolve_channel;
 use crate::hello;
 use crate::history::{self, HistoryLink};
 use crate::peer::wire::HELLO_ID;
-use crate::peer::{Link, Users};
+use crate::peer::{Link, Users, groups};
 use crate::plugins;
 use crate::webhook::MAX_MESSAGE_CHARS;
 use crate::webhook::config::{ApiKey, ChannelRef, WebhookConfig};
@@ -255,6 +255,51 @@ impl Link for Arc<BotApi> {
         bot.handle()
             .send_plugin_data(receivers, crate::peer::wire::DATA_ID, data)?;
         Ok(())
+    }
+
+    /// Reads the groups of `channel`. The subscription is made before the query, so the answer
+    /// cannot be missed; the bot lock is not held while waiting for the server.
+    async fn acl(&self, channel: &str) -> Result<groups::Members, groups::QueryError> {
+        let mut events = self.subscribe();
+        let channel_id = {
+            let guard = self.bot.lock().await;
+            let bot = guard.as_ref().ok_or(groups::QueryError::NotConnected)?;
+            if !bot.handle().is_connected() {
+                return Err(groups::QueryError::NotConnected);
+            }
+            let id = bot
+                .channel_id(channel)
+                .map_err(|_| groups::QueryError::UnknownChannel)?;
+            bot.handle().query_acl(id).map_err(|error| {
+                tracing::warn!(%error, "peer: ACL query not sent");
+                groups::QueryError::NotConnected
+            })?;
+            id
+        };
+        let deadline = tokio::time::Instant::now() + groups::QUERY_TIMEOUT;
+        loop {
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                return Err(groups::QueryError::Timeout);
+            }
+            match tokio::time::timeout(deadline - now, events.recv()).await {
+                Ok(Ok(Event::Acl(acl))) if acl.channel_id == channel_id => {
+                    return Ok(groups::members(&acl));
+                }
+                // Standard servers answer an ACL query only for users with the Write permission.
+                Ok(Ok(Event::PermissionDenied(deny)))
+                    if deny.kind == DenyKind::Permission
+                        && deny.permission == Some(permissions::WRITE) =>
+                {
+                    return Err(groups::QueryError::NoPermission);
+                }
+                Ok(Ok(Event::Disconnected(_))) => return Err(groups::QueryError::NotConnected),
+                Ok(Ok(_)) => continue,
+                // Not connected, or the event stream ended.
+                Ok(Err(_)) => return Err(groups::QueryError::NotConnected),
+                Err(_) => return Err(groups::QueryError::Timeout),
+            }
+        }
     }
 }
 

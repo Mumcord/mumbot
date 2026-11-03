@@ -152,11 +152,41 @@ fn short(hash: &str) -> &str {
 struct MockLink {
     users: Mutex<Option<Users>>,
     sent: Mutex<Vec<(Vec<u32>, serde_json::Value)>>,
+    /// What the mock answers an ACL query with, and the channels it was asked for.
+    answer: Mutex<Option<Result<groups::Members, groups::QueryError>>>,
+    queries: Mutex<Vec<String>>,
 }
 
 impl MockLink {
     fn take_sent(&self) -> Vec<(Vec<u32>, serde_json::Value)> {
         std::mem::take(&mut *self.sent.lock().expect("lock"))
+    }
+
+    fn take_queries(&self) -> Vec<String> {
+        std::mem::take(&mut *self.queries.lock().expect("lock"))
+    }
+
+    fn answers(&self, read: Result<groups::Members, groups::QueryError>) {
+        *self.answer.lock().expect("lock") = Some(read);
+    }
+}
+
+fn members_of(groups: &[(&str, &[u32])]) -> groups::Members {
+    groups
+        .iter()
+        .map(|(name, ids)| {
+            (
+                name.to_string(),
+                ids.iter().copied().collect::<HashSet<u32>>(),
+            )
+        })
+        .collect()
+}
+
+fn group_rules(names: &[&str]) -> Rules {
+    Rules {
+        allowed_groups: names.iter().map(|n| n.to_string()).collect(),
+        ..Rules::default()
     }
 }
 
@@ -173,6 +203,15 @@ impl Link for Arc<MockLink> {
             .expect("lock")
             .push((receivers.to_vec(), json));
         Ok(())
+    }
+
+    async fn acl(&self, channel: &str) -> Result<groups::Members, groups::QueryError> {
+        self.queries.lock().expect("lock").push(channel.to_owned());
+        self.answer
+            .lock()
+            .expect("lock")
+            .clone()
+            .unwrap_or(Err(groups::QueryError::NoPermission))
     }
 }
 
@@ -989,4 +1028,135 @@ async fn a_relay_restart_or_reconnect_forgets_the_broadcasts() {
         .await;
     s.peer.on_event(removed(ALICE, cert("a1")), now).await;
     assert!(s.relay.take_calls().is_empty());
+}
+
+#[tokio::test]
+async fn only_group_members_get_tokens_when_groups_are_configured() {
+    let mut s = ready_with(group_rules(&["Relay"]), &[ALICE, BOB, GUEST]).await;
+    s.link.answers(Ok(members_of(&[("Relay", &[ALICE_ID])])));
+    let now = Instant::now();
+    s.peer.on_event(request(ALICE, BOB), now).await;
+    assert_eq!(
+        s.link.take_sent()[0].1["r"],
+        "denied",
+        "both users of the pair must be members"
+    );
+    assert_eq!(
+        s.link.take_queries(),
+        vec!["Root".to_owned()],
+        "read per request"
+    );
+
+    s.link
+        .answers(Ok(members_of(&[("Relay", &[ALICE_ID, BOB_ID])])));
+    s.peer
+        .on_event(request(ALICE, BOB), now + groups::MIN_READ_INTERVAL)
+        .await;
+}
+
+#[tokio::test]
+async fn members_are_read_again_per_request_but_not_more_than_once_per_interval() {
+    let mut s = ready_with(group_rules(&["Relay"]), &[ALICE, BOB]).await;
+    s.link
+        .answers(Ok(members_of(&[("Relay", &[ALICE_ID, BOB_ID])])));
+    let now = Instant::now();
+    for _ in 0..2 {
+        s.peer.on_event(request(ALICE, BOB), now).await;
+    }
+    assert_eq!(
+        s.link.take_queries().len(),
+        1,
+        "the second request uses the answer"
+    );
+    s.peer
+        .on_event(request(ALICE, BOB), now + groups::MIN_READ_INTERVAL)
+        .await;
+    assert_eq!(s.link.take_queries(), vec!["Root".to_owned()]);
+}
+
+#[tokio::test]
+async fn a_failed_group_read_never_keeps_the_previous_membership() {
+    let mut s = ready_with(group_rules(&["Relay"]), &[ALICE, BOB]).await;
+    s.link
+        .answers(Ok(members_of(&[("Relay", &[ALICE_ID, BOB_ID])])));
+    let now = Instant::now();
+    s.peer.on_event(request(ALICE, BOB), now).await;
+    assert_eq!(s.link.take_sent()[0].1["t"], "token");
+
+    s.link.answers(Err(groups::QueryError::NoPermission));
+    s.peer
+        .on_event(request(ALICE, BOB), now + groups::MIN_READ_INTERVAL)
+        .await;
+    assert_eq!(
+        s.link.take_sent()[0].1["r"],
+        "denied",
+        "the bot fails closed, not open"
+    );
+    // Once the server answers again, tokens work again.
+    s.link
+        .answers(Ok(members_of(&[("Relay", &[ALICE_ID, BOB_ID])])));
+    s.peer
+        .on_event(request(ALICE, BOB), now + groups::MIN_READ_INTERVAL * 2)
+        .await;
+    assert_eq!(s.link.take_sent()[0].1["t"], "token");
+}
+
+#[tokio::test]
+async fn the_bot_refuses_to_start_without_the_write_permission_or_an_unknown_group() {
+    let mut s = setup_with(group_rules(&["Relay", "Mods"]));
+    s.link.answers(Err(groups::QueryError::NoPermission));
+    assert!(s.peer.check_access().await.is_err(), "no permission");
+
+    s.link.answers(Ok(members_of(&[("Relay", &[ALICE_ID])])));
+    assert!(
+        s.peer.check_access().await.is_err(),
+        "a configured group that the channel does not define"
+    );
+
+    s.link.answers(Ok(members_of(&[
+        ("Relay", &[ALICE_ID]),
+        ("Mods", &[BOB_ID]),
+    ])));
+    s.peer.check_access().await.expect("groups readable");
+}
+
+#[tokio::test]
+async fn a_lost_group_member_is_dropped_at_the_relay_with_its_pair_and_broadcast() {
+    let mut s = setup_with(group_rules(&["Relay"]));
+    let now = Instant::now();
+    s.peer.check_status().await;
+    for session in [ALICE, BOB] {
+        s.peer.on_event(screen_hello(session), now).await;
+    }
+    s.link
+        .answers(Ok(members_of(&[("Relay", &[ALICE_ID, BOB_ID])])));
+    s.peer.check_groups().await;
+    s.peer.on_event(request(ALICE, BOB), now).await;
+    assert_eq!(tokens(&s.link.take_sent()), 1);
+    s.peer.on_event(bcast_req(ALICE), now).await;
+    s.peer.on_event(admit(ALICE, BOB), now).await;
+    s.link.take_sent();
+    s.relay.take_calls();
+
+    s.link.answers(Ok(members_of(&[("Relay", &[ALICE_ID])])));
+    s.peer.check_groups().await;
+    assert_eq!(
+        s.relay.take_calls(),
+        vec![format!("kick {BCAST_ID} b1")],
+        "Bob is removed as a viewer"
+    );
+    assert_eq!(
+        *s.relay.removed.lock().expect("lock"),
+        vec![cert("b1").expect("b")],
+        "and his open pair ended"
+    );
+
+    // A guest that never had a pair or a broadcast is not sent to the relay again.
+    s.peer.on_event(hello(GUEST), now).await;
+    s.peer.check_groups().await;
+    assert!(s.relay.take_calls().is_empty());
+    assert!(
+        s.relay.removed.lock().expect("lock").len() == 1,
+        "still only Bob"
+    );
 }

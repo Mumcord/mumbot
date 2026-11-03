@@ -17,6 +17,11 @@ pub const MIN_SECRET_LEN: usize = 32;
 pub const CERT_REQUESTS_PER_MINUTE: usize = 10;
 /// Default open pairs per certificate, as many as the relay's default sessions per certificate.
 pub const MAX_PAIRS_PER_CERT: usize = 4;
+/// Channel whose ACL defines `allowed_groups` when none is configured.
+pub const DEFAULT_GROUP_CHANNEL: &str = "Root";
+/// Most groups a bot is allowed to check, and the longest group name it accepts.
+pub const MAX_GROUPS: usize = 16;
+const MAX_GROUP_NAME_CHARS: usize = 100;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -36,6 +41,13 @@ pub struct PeerConfig {
     /// Only registered users get relay tokens; off lets guests use the relay too.
     #[serde(default = "default_registered_only")]
     pub registered_only: bool,
+    /// Members of these groups get tokens instead of every registered user (issue #31). The bot
+    /// needs the Write permission on `group_channel` to read them.
+    #[serde(default)]
+    pub allowed_groups: Vec<String>,
+    /// Channel whose ACL defines `allowed_groups` (name or `Root/Path`); the root channel.
+    #[serde(default = "default_group_channel")]
+    pub group_channel: String,
     #[serde(default = "default_cert_requests_per_minute")]
     pub cert_requests_per_minute: usize,
     #[serde(default = "default_max_pairs_per_cert")]
@@ -44,6 +56,10 @@ pub struct PeerConfig {
 
 fn default_registered_only() -> bool {
     true
+}
+
+fn default_group_channel() -> String {
+    DEFAULT_GROUP_CHANNEL.to_owned()
 }
 
 fn default_cert_requests_per_minute() -> usize {
@@ -146,6 +162,8 @@ impl PeerConfig {
             api_fp: None,
             allow_insecure_http: false,
             registered_only: true,
+            allowed_groups: Vec::new(),
+            group_channel: DEFAULT_GROUP_CHANNEL.to_owned(),
             cert_requests_per_minute: CERT_REQUESTS_PER_MINUTE,
             max_pairs_per_cert: MAX_PAIRS_PER_CERT,
         }
@@ -169,6 +187,25 @@ impl PeerConfig {
         }
         if self.cert_requests_per_minute == 0 || self.max_pairs_per_cert == 0 {
             bail!("peer: cert_requests_per_minute and max_pairs_per_cert must be at least 1");
+        }
+        if self.allowed_groups.len() > MAX_GROUPS {
+            bail!("peer: allowed_groups lists more than {MAX_GROUPS} groups");
+        }
+        for name in &self.allowed_groups {
+            if name.trim().is_empty() || name.len() > MAX_GROUP_NAME_CHARS {
+                bail!(
+                    "peer: an allowed group name must have between 1 and {MAX_GROUP_NAME_CHARS} \
+                     characters"
+                );
+            }
+        }
+        for (i, name) in self.allowed_groups.iter().enumerate() {
+            if self.allowed_groups[..i].contains(name) {
+                bail!("peer: allowed_groups lists {name:?} twice");
+            }
+        }
+        if self.group_channel.trim().is_empty() {
+            bail!("peer: group_channel must name a channel");
         }
         Ok(())
     }
@@ -238,6 +275,7 @@ pub fn normalize_sha256(value: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::peer::Rules;
 
     fn config(url: &str, fp: Option<&str>) -> PeerConfig {
         PeerConfig {
@@ -364,5 +402,31 @@ mod tests {
         assert!(parsed.registered_only, "on by default");
         assert_eq!(parsed.cert_requests_per_minute, CERT_REQUESTS_PER_MINUTE);
         assert_eq!(parsed.max_pairs_per_cert, MAX_PAIRS_PER_CERT);
+        assert!(parsed.allowed_groups.is_empty(), "groups are opt in");
+        assert_eq!(parsed.group_channel, DEFAULT_GROUP_CHANNEL);
+    }
+
+    #[test]
+    fn group_names_are_checked_and_taken_as_the_rules() {
+        let parsed: PeerConfig = toml::from_str(
+            "api_url = \"http://127.0.0.1:7480\"\nallowed_groups = [\"Relay\", \"\", \"Relay\"]\n",
+        )
+        .expect("toml");
+        assert!(parsed.validate().is_err(), "empty or twice");
+        let mut good = PeerConfig::new("http://127.0.0.1:7480");
+        good.allowed_groups = vec!["Relay".to_owned()];
+        good.group_channel = "Root/Support".to_owned();
+        good.validate().expect("groups");
+        let too_many = PeerConfig {
+            allowed_groups: (0..MAX_GROUPS + 1).map(|i| format!("g{i}")).collect(),
+            ..good.clone()
+        };
+        assert!(
+            too_many.validate().is_err(),
+            "more than {MAX_GROUPS} groups"
+        );
+        let rules = Rules::from(&good);
+        assert_eq!(rules.allowed_groups, vec!["Relay".to_owned()]);
+        assert_eq!(rules.group_channel, "Root/Support");
     }
 }
