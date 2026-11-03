@@ -10,13 +10,12 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow};
 use mumcord_codec::SAMPLE_RATE;
 use rtrb::Producer;
-use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::DecoderOptions;
+use symphonia::core::codecs::audio::AudioDecoderOptions;
 use symphonia::core::errors::Error;
-use symphonia::core::formats::FormatOptions;
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
 
 /// How long the decoder sleeps when the ring buffer is full: far below the buffered time.
 const FULL_WAIT: Duration = Duration::from_millis(5);
@@ -46,36 +45,41 @@ fn decode(
     let mut hint = Hint::new();
     hint.with_extension("mp3");
     let mut format = symphonia::default::get_probe()
-        .format(
+        .probe(
             &hint,
             stream,
-            &FormatOptions::default(),
-            &MetadataOptions::default(),
+            FormatOptions::default(),
+            MetadataOptions::default(),
         )
-        .map_err(|e| anyhow!("not an MP3 file: {e}"))?
-        .format;
+        .map_err(|e| anyhow!("not an MP3 file: {e}"))?;
     let track = format
-        .default_track()
+        .default_track(TrackType::Audio)
         .ok_or_else(|| anyhow!("the file has no audio track"))?;
     let track_id = track.id;
+    let params = track
+        .codec_params
+        .as_ref()
+        .and_then(|params| params.audio())
+        .ok_or_else(|| anyhow!("the file has no audio track"))?;
     let mut decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &DecoderOptions::default())
+        .make_audio_decoder(params, &AudioDecoderOptions::default())
         .map_err(|e| anyhow!("no decoder: {e}"))?;
 
     let mut left = u64::from(SAMPLE_RATE).saturating_mul(max_len.as_secs());
     let mut skipped = 0u64;
-    let mut samples: Option<SampleBuffer<f32>> = None;
+    let mut samples: Vec<f32> = Vec::new();
     let mut resampler: Option<Resampler> = None;
     let mut mono = Vec::new();
     let mut resampled = Vec::new();
     while left > 0 && !cancel.load(Ordering::Relaxed) {
         let packet = match format.next_packet() {
-            Ok(packet) => packet,
+            Ok(Some(packet)) => packet,
+            Ok(None) => break,
             Err(Error::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
             Err(Error::ResetRequired) => break,
             Err(e) => return Err(anyhow!("reading the track: {e}")),
         };
-        if packet.track_id() != track_id {
+        if packet.track_id != track_id {
             continue;
         }
         let decoded = match decoder.decode(&packet) {
@@ -86,23 +90,19 @@ fn decode(
             }
             Err(e) => return Err(anyhow!("decoding the track: {e}")),
         };
-        let spec = *decoded.spec();
-        let channels = spec.channels.count().max(1);
-        let buffer = match &mut samples {
-            Some(buffer) if buffer.capacity() >= decoded.capacity() * channels => buffer,
-            slot => slot.insert(SampleBuffer::new(decoded.capacity() as u64, spec)),
-        };
-        buffer.copy_interleaved_ref(decoded);
+        let spec = decoded.spec();
+        let channels = spec.channels().count().max(1);
+        let rate = spec.rate();
+        decoded.copy_to_vec_interleaved(&mut samples);
         mono.clear();
         mono.extend(
-            buffer
-                .samples()
+            samples
                 .chunks_exact(channels)
                 .map(|frame| frame.iter().sum::<f32>() / channels as f32),
         );
         let resampler = match &mut resampler {
-            Some(r) if r.input_rate == spec.rate => r,
-            slot => slot.insert(Resampler::new(spec.rate)),
+            Some(r) if r.input_rate == rate => r,
+            slot => slot.insert(Resampler::new(rate)),
         };
         resampled.clear();
         resampler.process(&mono, &mut resampled);

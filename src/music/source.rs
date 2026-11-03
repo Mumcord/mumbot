@@ -9,10 +9,10 @@ use std::time::Duration;
 
 use rustls::ClientConfig;
 use rustls::pki_types::ServerName;
-use symphonia::core::formats::FormatOptions;
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, TrackType};
 use symphonia::core::io::MediaSourceStream;
-use symphonia::core::meta::{MetadataOptions, StandardTagKey};
-use symphonia::core::probe::Hint;
+use symphonia::core::meta::{MetadataOptions, StandardTag};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
@@ -473,38 +473,40 @@ pub fn probe(bytes: &Arc<[u8]>) -> Result<(Option<String>, Option<Duration>), So
         MediaSourceStream::new(Box::new(Cursor::new(Arc::clone(bytes))), Default::default());
     let mut hint = Hint::new();
     hint.with_extension("mp3");
-    let mut probed = symphonia::default::get_probe()
-        .format(
+    let mut format = symphonia::default::get_probe()
+        .probe(
             &hint,
             stream,
-            &FormatOptions::default(),
-            &MetadataOptions::default(),
+            FormatOptions::default(),
+            MetadataOptions::default(),
         )
         .map_err(|_| not_mp3())?;
-    let track = probed.format.default_track().ok_or_else(not_mp3)?;
-    let params = &track.codec_params;
-    let duration = match (params.n_frames, params.sample_rate) {
+    let track = format.default_track(TrackType::Audio).ok_or_else(not_mp3)?;
+    let rate = track
+        .codec_params
+        .as_ref()
+        .and_then(|params| params.audio())
+        .and_then(|audio| audio.sample_rate);
+    let duration = match (track.num_frames, rate) {
         (Some(frames), Some(rate)) if rate > 0 => {
             Some(Duration::from_secs_f64(frames as f64 / f64::from(rate)))
         }
         _ => None,
     };
     let mut tags = Vec::new();
-    if let Some(metadata) = probed.metadata.get()
-        && let Some(revision) = metadata.current()
-    {
-        tags.extend(revision.tags().iter().cloned());
+    if let Some(revision) = format.metadata().current() {
+        tags.extend(revision.media.tags.iter().cloned());
     }
-    if let Some(revision) = probed.format.metadata().current() {
-        tags.extend(revision.tags().iter().cloned());
-    }
-    let tag = |key: StandardTagKey| {
-        tags.iter()
-            .find(|tag| tag.std_key == Some(key))
-            .map(|tag| tag.value.to_string())
-            .filter(|value| !value.trim().is_empty())
-    };
-    let title = match (tag(StandardTagKey::Artist), tag(StandardTagKey::TrackTitle)) {
+    let artist = tags.iter().find_map(|tag| match &tag.std {
+        Some(StandardTag::Artist(value)) => Some(value.to_string()),
+        _ => None,
+    });
+    let track_title = tags.iter().find_map(|tag| match &tag.std {
+        Some(StandardTag::TrackTitle(value)) => Some(value.to_string()),
+        _ => None,
+    });
+    let non_empty = |value: Option<String>| value.filter(|value| !value.trim().is_empty());
+    let title = match (non_empty(artist), non_empty(track_title)) {
         (Some(artist), Some(title)) => Some(format!("{artist} – {title}")),
         (None, Some(title)) => Some(title),
         _ => None,
