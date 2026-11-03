@@ -8,11 +8,15 @@
 //!    certificate fingerprint, state), to that client only. On every change (relay restart,
 //!    address, ports, fingerprint, reachable or not) all of them get it again in one message.
 //! 2. A client that asks for a token for one peer gets one from the relay's API, sent to both.
+//! 3. A screen sharer asks for a broadcast (one upload, copied by the relay to every viewer) and
+//!    admits viewers one by one; the bot checks each viewer and hands it a subscriber token
+//!    (Mumcord spec 07, FR-7.40 to FR-7.50, section 6.6; see [`broadcast`]).
 //!
 //! Only registered users get tokens (unless `registered_only` is off). When the last session of a
 //! certificate leaves or changes certificate, the relay drops that hash. Runs as a module
 //! (`mumbot peer --config bot.toml`, or `mumbot run` with other modules) with a `[peer]` section.
 
+pub mod broadcast;
 pub mod config;
 pub mod relay;
 pub mod wire;
@@ -23,15 +27,19 @@ use std::time::Duration;
 
 use anyhow::Result;
 use mumcord_protocol::Event;
-use tokio::sync::broadcast;
+use tokio::sync::broadcast as events;
 use tokio::time::Instant;
 
 pub use config::{PeerConfig, Secret};
-pub use relay::{BroadcastStatus, HttpRelay, Pair, PairError, RelayApi, Status};
+pub use relay::{
+    BroadcastError, BroadcastStatus, HttpRelay, NewBroadcast, Pair, PairError, RelayApi, Status,
+    ViewerToken,
+};
 
+use broadcast::{Broadcasts, Cleanup};
 use wire::{
-    PeerMessage, RelayAnnouncement, RelayState as State, RelayToken, RelayUse, RequestId,
-    TokenErrorReason as TokenError,
+    BroadcastErrorReason as BcastError, BroadcastId, PeerMessage, RelayAnnouncement,
+    RelayState as State, RelayToken, RelayUse, RequestId, TokenErrorReason as TokenError,
 };
 
 /// A `token-req`: the sender wants a relay token for itself and session `peer`.
@@ -50,6 +58,9 @@ pub const STATUS_INTERVAL: Duration = Duration::from_secs(30);
 const FAILURES_UNTIL_DOWN: u32 = 2;
 /// Token requests per requesting session and minute (FR-4.26).
 pub const REQUESTS_PER_MINUTE: usize = 6;
+/// `bcast-req` and `bcast-admit` per session and minute: a full broadcast of 25 viewers that
+/// all join at once must fit, with room for viewers who press Watch again.
+pub const BROADCAST_REQUESTS_PER_MINUTE: usize = 60;
 
 /// What the module sees of the Mumble connection.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -60,6 +71,8 @@ pub struct Users {
     pub certs: HashMap<u32, Option<String>>,
     /// Registration ids of the registered users online; guests are missing.
     pub user_ids: HashMap<u32, u32>,
+    /// The channel each session is in.
+    pub channels: HashMap<u32, u32>,
 }
 
 /// The narrow view of the bot the module needs: who is online, and sending plugin data.
@@ -147,6 +160,10 @@ pub struct Peer<R, L> {
     rules: Rules,
     /// Pairs handed out, as sorted hash pairs, until one of the two certificates is dropped.
     pairs: HashSet<(String, String)>,
+    /// Sessions of `clients` whose hello also listed `screen-share`.
+    screen: HashSet<u32>,
+    broadcasts: Broadcasts,
+    bcast_limiter: RequestLimiter<u32>,
 }
 
 impl<R: RelayApi, L: Link> Peer<R, L> {
@@ -163,6 +180,9 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
             cert_limiter: RequestLimiter::new(rules.cert_requests_per_minute),
             rules,
             pairs: HashSet::new(),
+            screen: HashSet::new(),
+            broadcasts: Broadcasts::default(),
+            bcast_limiter: RequestLimiter::new(BROADCAST_REQUESTS_PER_MINUTE),
         }
     }
 
@@ -179,48 +199,49 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
             Event::PluginData(data) => {
                 let Some(sender) = data.sender else { return };
                 if data.data_id == wire::HELLO_ID && wire::is_p2p_hello(&data.data) {
-                    self.on_hello(sender).await;
+                    let screen = wire::hello_lists(&data.data, wire::SCREEN_SHARE_FEATURE);
+                    self.on_hello(sender, screen).await;
                 } else if data.data_id == wire::DATA_ID
-                    && let Ok(PeerMessage::TokenRequest {
-                        rid,
-                        peer,
-                        relay_use,
-                    }) = PeerMessage::decode(&data.data)
+                    && let Ok(message) = PeerMessage::decode(&data.data)
                 {
-                    let relay_use = relay_use.unwrap_or(RelayUse::ScreenShare);
-                    self.on_request(
-                        sender,
-                        TokenRequest {
-                            rid,
-                            peer,
-                            relay_use,
-                        },
-                        now,
-                    )
-                    .await;
+                    self.on_message(sender, message, now).await;
                 }
             }
             Event::UserUpdated(change) => {
+                let moved = change.moved_from.is_some();
                 let user = change.user;
                 if let Some(known) = self.clients.get_mut(&user.session)
                     && *known != user.cert_hash
                 {
                     let old = std::mem::replace(known, user.cert_hash);
+                    // The relay knows broadcast members by certificate, so a new certificate is
+                    // a new person to it: the session's broadcasts end and it stops watching.
+                    let cleanup = self.broadcasts.left(user.session);
+                    self.clean_up(cleanup).await;
                     if let Some(hash) = old {
                         self.release(&hash).await;
                     }
                 }
+                if moved && self.broadcasts.involves(user.session) {
+                    self.check_channels().await;
+                }
             }
             Event::UserRemoved { user, .. } => {
+                self.screen.remove(&user.session);
+                let cleanup = self.broadcasts.left(user.session);
+                self.clean_up(cleanup).await;
                 if let Some(Some(hash)) = self.clients.remove(&user.session) {
                     self.release(&hash).await;
                 }
             }
             // Sessions are only valid per connection; after a reconnect the clients greet the
-            // bot again because it is a new joiner for them (FR-4.24).
+            // bot again because it is a new joiner for them (FR-4.24). Broadcasts nobody
+            // publishes to any more end at the relay's idle timeout.
             Event::Disconnected(_) => {
                 self.clients.clear();
                 self.pairs.clear();
+                self.screen.clear();
+                self.broadcasts.clear();
             }
             _ => {}
         }
@@ -239,6 +260,14 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
                     tracing::info!("peer: relay reachable");
                 } else {
                     tracing::info!("peer: relay changed or back, announcing it again");
+                }
+                // A restarted relay has forgotten every broadcast.
+                if self
+                    .status
+                    .as_ref()
+                    .is_some_and(|old| old.boot_id != status.boot_id)
+                {
+                    self.broadcasts.clear();
                 }
                 self.status = Some(status);
                 self.state = State::Up;
@@ -285,7 +314,13 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
         }
     }
 
-    async fn on_hello(&mut self, sender: u32) {
+    async fn on_hello(&mut self, sender: u32, screen: bool) {
+        // The feature list may change with a later hello (screen sharing turned on or off).
+        if screen {
+            self.screen.insert(sender);
+        } else {
+            self.screen.remove(&sender);
+        }
         // Only the first hello per session is answered, so a client repeating its hello cannot
         // make the bot run into the server's plugin data limit.
         if self.clients.contains_key(&sender) {
@@ -311,6 +346,219 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
         };
         if let Err(error) = self.link.send(receivers, data).await {
             tracing::warn!(%error, "peer: plugin data not sent");
+        }
+    }
+
+    async fn on_message(&mut self, sender: u32, message: PeerMessage, now: Instant) {
+        match message {
+            PeerMessage::TokenRequest {
+                rid,
+                peer,
+                relay_use,
+            } => {
+                let relay_use = relay_use.unwrap_or(RelayUse::ScreenShare);
+                let request = TokenRequest {
+                    rid,
+                    peer,
+                    relay_use,
+                };
+                self.on_request(sender, request, now).await;
+            }
+            PeerMessage::BroadcastRequest { rid, max } => {
+                let result = self.create_broadcast(sender, rid, max, now).await;
+                self.answer(sender, rid, result).await;
+            }
+            PeerMessage::BroadcastAdmit { rid, id, viewer } => {
+                let result = self.admit(sender, id, viewer, now).await;
+                self.answer(sender, rid, result).await;
+            }
+            PeerMessage::BroadcastKick { id, viewer } => self.kick(sender, id, viewer).await,
+            // Messages for clients, sent by another client: nothing for the bot to do.
+            _ => {}
+        }
+    }
+
+    /// Sends `bcast` or a token to the right receiver, or `bcast-err` to the requester.
+    async fn answer(
+        &self,
+        sender: u32,
+        rid: RequestId,
+        result: Result<(u32, PeerMessage), BcastError>,
+    ) {
+        match result {
+            Ok((receiver, message)) => self.send(&[receiver], &message).await,
+            Err(reason) => {
+                tracing::debug!(?reason, "peer: broadcast request refused");
+                let error = PeerMessage::BroadcastError { rid, reason };
+                self.send(&[sender], &error).await;
+            }
+        }
+    }
+
+    /// `bcast-req`: a new broadcast published by `sender` (FR-7.40).
+    async fn create_broadcast(
+        &mut self,
+        sender: u32,
+        rid: RequestId,
+        max: u16,
+        now: Instant,
+    ) -> Result<(u32, PeerMessage), BcastError> {
+        if !self.bcast_limiter.allow(sender, now) {
+            return Err(BcastError::RateLimited);
+        }
+        let users = self.link.users().await.ok_or(BcastError::RelayDown)?;
+        let cert = self.member_cert(&users, sender)?;
+        if self.state != State::Up {
+            return Err(BcastError::RelayDown);
+        }
+        let created = match self.relay.create_broadcast(&cert, max).await {
+            Ok(created) => created,
+            Err(BroadcastError::RelayFull) => return Err(BcastError::RelayFull),
+            Err(BroadcastError::UseNotAllowed) => return Err(BcastError::UseNotAllowed),
+            Err(BroadcastError::Full | BroadcastError::Gone) => return Err(BcastError::RelayDown),
+            Err(BroadcastError::Unavailable(error)) => {
+                tracing::warn!(%error, "peer: no broadcast from the relay");
+                return Err(BcastError::RelayDown);
+            }
+        };
+        let Ok(token) = RelayToken::parse(&created.tok) else {
+            tracing::warn!("peer: the relay sent a malformed broadcast token");
+            self.delete_broadcast(created.id).await;
+            return Err(BcastError::RelayDown);
+        };
+        if let Some(old) = self.broadcasts.insert(created.id, sender, cert) {
+            self.delete_broadcast(old).await;
+        }
+        let message = PeerMessage::Broadcast {
+            rid,
+            id: created.id,
+            token,
+            ttl: ttl(created.expires_in),
+        };
+        Ok((sender, message))
+    }
+
+    /// `bcast-admit`: the publisher of `id` lets session `viewer` watch (FR-7.42).
+    async fn admit(
+        &mut self,
+        sender: u32,
+        id: BroadcastId,
+        viewer: u32,
+        now: Instant,
+    ) -> Result<(u32, PeerMessage), BcastError> {
+        if !self.bcast_limiter.allow(sender, now) {
+            return Err(BcastError::RateLimited);
+        }
+        let users = self.link.users().await.ok_or(BcastError::RelayDown)?;
+        let publisher_cert = match self.broadcasts.get(id) {
+            Some(broadcast) if broadcast.publisher == sender => broadcast.publisher_cert.clone(),
+            _ => return Err(BcastError::Denied),
+        };
+        if self.member_cert(&users, sender)? != publisher_cert || viewer == users.own {
+            return Err(BcastError::Denied);
+        }
+        let viewer_cert = self.member_cert(&users, viewer)?;
+        // Two sessions of one identity are one user; the relay refuses it anyway.
+        if viewer_cert == publisher_cert {
+            return Err(BcastError::Denied);
+        }
+        let channel = |session| users.channels.get(&session);
+        if channel(sender).is_none() || channel(sender) != channel(viewer) {
+            return Err(BcastError::NotSameChannel);
+        }
+        if self.state != State::Up {
+            return Err(BcastError::RelayDown);
+        }
+        let granted = match self.relay.admit_viewer(id, &viewer_cert).await {
+            Ok(granted) => granted,
+            Err(BroadcastError::Full) => return Err(BcastError::Full),
+            Err(BroadcastError::Gone) => {
+                // Ended at the relay (idle, restart): the sharer asks for a new one.
+                tracing::debug!("peer: admission to a broadcast the relay already ended");
+                self.broadcasts.remove(id);
+                return Err(BcastError::Denied);
+            }
+            Err(BroadcastError::RelayFull) => return Err(BcastError::RelayFull),
+            Err(BroadcastError::UseNotAllowed) => return Err(BcastError::UseNotAllowed),
+            Err(BroadcastError::Unavailable(error)) => {
+                tracing::warn!(%error, "peer: viewer not admitted by the relay");
+                return Err(BcastError::RelayDown);
+            }
+        };
+        let Ok(token) = RelayToken::parse(&granted.tok) else {
+            tracing::warn!("peer: the relay sent a malformed viewer token");
+            self.remove_viewer(id, &viewer_cert).await;
+            return Err(BcastError::RelayDown);
+        };
+        self.broadcasts.admit(id, viewer, viewer_cert);
+        let message = PeerMessage::BroadcastToken {
+            id,
+            token,
+            ttl: ttl(granted.expires_in),
+            sharer: sender,
+        };
+        Ok((viewer, message))
+    }
+
+    /// `bcast-kick`: only the publisher may remove, and only viewers the bot admitted, so a
+    /// kick needs no rate limit of its own.
+    async fn kick(&mut self, sender: u32, id: BroadcastId, viewer: u32) {
+        if self
+            .broadcasts
+            .get(id)
+            .is_none_or(|b| b.publisher != sender)
+        {
+            return;
+        }
+        if let Some(cert) = self.broadcasts.kick(id, viewer) {
+            self.remove_viewer(id, &cert).await;
+        }
+    }
+
+    /// The certificate of a session that may take part in a broadcast: online with a
+    /// certificate, hello with `p2p` and `screen-share`, and allowed to use the relay.
+    fn member_cert(&self, users: &Users, session: u32) -> Result<String, BcastError> {
+        match users.certs.get(&session) {
+            Some(Some(cert))
+                if self.clients.contains_key(&session)
+                    && self.screen.contains(&session)
+                    && self.allowed(users, session) =>
+            {
+                Ok(cert.clone())
+            }
+            _ => Err(BcastError::Denied),
+        }
+    }
+
+    /// Removes viewers who are no longer in their sharer's channel.
+    async fn check_channels(&mut self) {
+        let Some(users) = self.link.users().await else {
+            return;
+        };
+        let cleanup = self
+            .broadcasts
+            .outside_channel(|session| users.channels.get(&session).copied());
+        self.clean_up(cleanup).await;
+    }
+
+    async fn clean_up(&self, cleanup: Vec<Cleanup>) {
+        for step in cleanup {
+            match step {
+                Cleanup::Delete(id) => self.delete_broadcast(id).await,
+                Cleanup::RemoveViewer(id, cert) => self.remove_viewer(id, &cert).await,
+            }
+        }
+    }
+
+    async fn delete_broadcast(&self, id: BroadcastId) {
+        if let Err(error) = self.relay.delete_broadcast(id).await {
+            tracing::warn!(%error, "peer: the relay did not end a broadcast");
+        }
+    }
+
+    async fn remove_viewer(&self, id: BroadcastId, cert: &str) {
+        if let Err(error) = self.relay.remove_viewer(id, cert).await {
+            tracing::warn!(%error, "peer: the relay did not remove a viewer");
         }
     }
 
@@ -411,7 +659,7 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
     ) -> Result<(RelayToken, u16), TokenError> {
         match self.relay.create_pair(a, b, relay_use).await {
             Ok(pair) => match RelayToken::parse(&pair.tok) {
-                Ok(token) => Ok((token, u16::try_from(pair.expires_in).unwrap_or(u16::MAX))),
+                Ok(token) => Ok((token, ttl(pair.expires_in))),
                 Err(_) => {
                     tracing::warn!("peer: the relay sent a malformed token");
                     Err(TokenError::RelayDown)
@@ -461,6 +709,11 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
     }
 }
 
+/// A token's validity in seconds as it fits the wire.
+fn ttl(expires_in: u64) -> u16 {
+    u16::try_from(expires_in).unwrap_or(u16::MAX)
+}
+
 fn pair_key(a: &str, b: &str) -> (String, String) {
     if a <= b {
         (a.to_owned(), b.to_owned())
@@ -487,7 +740,7 @@ pub async fn run<R: RelayApi, L: Link>(
     relay: R,
     link: L,
     rules: Rules,
-    mut events: broadcast::Receiver<Event>,
+    mut events: events::Receiver<Event>,
 ) -> Result<()> {
     if !rules.registered_only {
         tracing::warn!(
@@ -504,10 +757,10 @@ pub async fn run<R: RelayApi, L: Link>(
                 Ok(event) => peer.on_event(event, Instant::now()).await,
                 // A missed hello or request is repeated by the client; a missed leave only
                 // keeps a pair until its token expires.
-                Err(broadcast::error::RecvError::Lagged(missed)) => {
+                Err(events::error::RecvError::Lagged(missed)) => {
                     tracing::warn!(missed, "peer: fell behind the event stream");
                 }
-                Err(broadcast::error::RecvError::Closed) => return Ok(()),
+                Err(events::error::RecvError::Closed) => return Ok(()),
             },
             _ = status.tick() => peer.check_status().await,
         }

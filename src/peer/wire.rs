@@ -10,14 +10,17 @@
 use serde::Deserialize;
 
 pub use mumcord_p2p::{
-    PEER_DATA_ID as DATA_ID, PeerMessage, RelayAnnouncement, RelayState, RelayToken, RelayUse,
-    RequestId, TokenErrorReason,
+    BroadcastErrorReason, BroadcastId, PEER_DATA_ID as DATA_ID, PeerMessage, RelayAnnouncement,
+    RelayState, RelayToken, RelayUse, RequestId, TokenErrorReason,
 };
 
 /// Plugin data id of the hello every Mumcord client sends on connect and to people who join.
 pub const HELLO_ID: &str = "mumcord.hello";
 /// The hello feature of clients that can use P2P, and so the relay.
 pub const P2P_FEATURE: &str = "p2p";
+/// The hello feature of clients that can share and watch screens; broadcasts need it on both
+/// sides (Mumcord spec 07, section 6.6).
+pub const SCREEN_SHARE_FEATURE: &str = "screen-share";
 
 #[derive(Deserialize)]
 struct Hello {
