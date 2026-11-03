@@ -11,6 +11,7 @@
 pub mod config;
 pub mod core;
 pub mod hash;
+pub mod proof;
 pub mod store;
 pub mod wire;
 
@@ -18,7 +19,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use mumcord_protocol::{Event, ServerState};
+use mumcord_protocol::{Event, ServerState, permissions};
 use tokio::sync::broadcast;
 
 pub use config::HistoryConfig;
@@ -38,6 +39,9 @@ pub trait HistoryLink {
     fn state(&self) -> impl Future<Output = Option<ServerState>> + Send;
     /// Sends history sync plugin data.
     fn send(&self, receivers: &[u32], data: Vec<u8>) -> impl Future<Output = Result<()>> + Send;
+    /// Asks the server for the bot's own permissions in `channel`; the answer arrives as
+    /// [`Event::PermissionsUpdated`].
+    fn query_permissions(&self, channel: u32) -> impl Future<Output = Result<()>> + Send;
 }
 
 /// Unix milliseconds of the bot's clock: Mumble has no server timestamps.
@@ -62,14 +66,16 @@ async fn blocking<T: Send + 'static>(
 }
 
 /// Runs the module until the bot's event stream ends. Subscribe `events` before the login, so
-/// the module sees everyone arrive.
+/// the module sees everyone arrive. `tokens` are the channel passwords the bot logs in with;
+/// with any, locked channels need the password proof.
 pub async fn run<L: HistoryLink>(
     config: HistoryConfig,
+    tokens: Vec<String>,
     store: Store,
     link: L,
     mut events: broadcast::Receiver<Event>,
 ) -> Result<()> {
-    let core = Arc::new(Mutex::new(Core::new(config, store, now_millis())));
+    let core = Arc::new(Mutex::new(Core::new(config, tokens, store, now_millis())));
     blocking(&core, |core| core.prune(now_millis())).await?;
     let mut tick = tokio::time::interval(TICK);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -85,6 +91,20 @@ pub async fn run<L: HistoryLink>(
                     // The own user (what the bot receives live) is only known in the state.
                     let Some(state) = link.state().await else { continue };
                     blocking(&core, move |core| core.record(&message, &state, now_millis()))
+                        .await?;
+                }
+                Ok(Event::PermissionsUpdated { channel_id: Some(channel) }) => {
+                    // The bits are only in the state; a flush without a channel changes nothing
+                    // the proof relies on (it needs an answer after the challenge).
+                    let Some(bits) = link
+                        .state()
+                        .await
+                        .and_then(|s| s.permissions.get(&channel).copied())
+                    else {
+                        continue;
+                    };
+                    let enter = bits & permissions::ENTER != 0;
+                    blocking(&core, move |core| core.own_permissions(channel, enter, now_millis()))
                         .await?;
                 }
                 Ok(event) => {
@@ -107,12 +127,18 @@ pub async fn run<L: HistoryLink>(
                     blocking(&core, move |core| core.resync(&state, now_millis())).await?;
                     synced = true;
                 }
-                let outgoing = blocking(&core, |core| {
+                let (queries, outgoing) = blocking(&core, |core| {
                     let now = now_millis();
                     core.tick(now);
-                    core.take_outgoing(now)
+                    (core.take_permission_queries(), core.take_outgoing(now))
                 })
                 .await?;
+                // Before the challenges go out, so the answer can arrive in time.
+                for channel in queries {
+                    if let Err(error) = link.query_permissions(channel).await {
+                        tracing::warn!(%error, "history: asking for the own permissions failed");
+                    }
+                }
                 for (receivers, data) in outgoing {
                     if let Err(error) = link.send(&receivers, data).await {
                         tracing::warn!(%error, "history: plugin data not sent");

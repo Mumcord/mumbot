@@ -4,7 +4,8 @@
 //!
 //! A test bot posts channel and private messages, then a second test bot plays a Mumcord client
 //! that joined later: it sends the history sync requests Mumcord sends (`areq`, `hreq`, `get`)
-//! and checks the answers (spec 04, AC-4.1 to AC-4.4).
+//! and checks the answers (spec 04, AC-4.1 to AC-4.4). A second test covers a password channel
+//! (Mumcord issue #382): listeners get nothing, people inside get it after the password proof.
 
 #![cfg(feature = "tester")]
 
@@ -13,16 +14,18 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use mumbot::history::hash::{Content, content_hash};
+use mumbot::history::proof;
 use mumbot::history::store::Store;
 use mumbot::history::wire::{self, DATA_ID, Hash, Packet};
 use mumbot::history::{HistoryConfig, now_millis};
-use mumbot::protocol::Event;
+use mumbot::protocol::{Event, proto};
 use mumbot::voice_settings::VoiceSettings;
-use mumbot::webhook::{ChannelRef, ModulesConfig, ServerConfig, WebhookConfig};
+use mumbot::webhook::{ChannelRef, ChannelToken, ModulesConfig, ServerConfig, WebhookConfig};
 use mumbot::{Bot, BotConfig, Module, UserCheck, env, modules};
 use tokio::sync::broadcast;
 
 const WEEK_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+const PASSWORD: &str = "h1story-token";
 
 fn live() -> bool {
     let on = std::env::var("MUMBOT_LIVE").is_ok_and(|v| v == "1");
@@ -272,4 +275,195 @@ async fn a_late_mumcord_client_loads_the_recorded_channel_history() {
     running.abort();
     carol.disconnect().await.expect("carol leaves");
     alice.disconnect().await.expect("alice leaves");
+}
+
+/// The history bot sitting in the password channel `room` with its password in the config.
+fn locked_history_config(dir: &Path, name: &str, room: &str) -> Arc<WebhookConfig> {
+    let mut config = (*history_config(dir, name)).clone();
+    config.server.channel = Some(room.to_owned());
+    config.tokens = vec![ChannelToken {
+        channel: ChannelRef::Name(room.to_owned()),
+        password: PASSWORD.to_owned(),
+    }];
+    if let Some(history) = config.history.as_mut() {
+        history.channels = vec![ChannelRef::Name(room.to_owned())];
+    }
+    Arc::new(config)
+}
+
+async fn wait_channel(bot: &Bot, room: &str) -> u32 {
+    for _ in 0..200 {
+        if let Ok(id) = bot.channel_id(room) {
+            return id;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("channel {room:?} was not created");
+}
+
+#[tokio::test]
+#[ignore = "needs testenv and MUMBOT_LIVE=1"]
+async fn a_password_channel_is_shared_only_after_the_password_proof() {
+    if !live() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let room = unique("mc-history-lock");
+    let (alice_name, carol_name, eve_name, bot_name) = (
+        unique("alice"),
+        unique("carol"),
+        unique("eve"),
+        unique("history"),
+    );
+    let admin = Bot::connect(BotConfig::superuser(env::test_port()))
+        .await
+        .expect("SuperUser bot (SUPERUSER_PASSWORD in testenv/.env)");
+    admin
+        .handle()
+        .send_channel_state(proto::ChannelState {
+            parent: Some(0),
+            name: Some(room.clone()),
+            temporary: Some(false),
+            ..Default::default()
+        })
+        .expect("create channel");
+    let id = wait_channel(&admin, &room).await;
+    admin.require_token(&room, PASSWORD).await.expect("ACL");
+    let with_token = |name: &str| BotConfig {
+        tokens: vec![PASSWORD.to_owned()],
+        ..client(dir.path(), name)
+    };
+
+    let running = tokio::spawn(modules::run(
+        locked_history_config(dir.path(), &bot_name, &room),
+        VoiceSettings::default(),
+    ));
+    admin
+        .wait_user(
+            &bot_name,
+            &UserCheck {
+                in_channel: Some(room.clone()),
+                ..UserCheck::default()
+            },
+        )
+        .await
+        .expect("the history bot is inside the password channel");
+    let alice = Bot::connect(with_token(&alice_name)).await.expect("alice");
+    alice
+        .join(&room)
+        .await
+        .expect("alice enters with the password");
+    alice
+        .send_channel(Some(&room), "locked secret")
+        .expect("message");
+    alice.flush().await.expect("flush");
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+
+    // Eve has no password and only listens: Listen is granted to everyone, Enter is not.
+    let eve = Bot::connect(client(dir.path(), &eve_name))
+        .await
+        .expect("eve");
+    let mut eve_events = eve.subscribe();
+    eve.listen(&[room.as_str()]).expect("listen");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let bot = session_of(&eve, &bot_name);
+    let now = now_millis();
+    eve.handle()
+        .send_plugin_data(
+            &[bot],
+            DATA_ID,
+            wire::encode(&Packet::HashRequest {
+                req: 1,
+                channel: id,
+                from: now - WEEK_MS,
+                to: now,
+            }),
+        )
+        .expect("plugin data");
+    assert_eq!(
+        answer(&mut eve_events, bot, |_| true).await,
+        [Packet::Deny { req: 1 }],
+        "a listener without the password gets nothing"
+    );
+
+    // Carol enters with the password and proves it.
+    let carol = Bot::connect(with_token(&carol_name)).await.expect("carol");
+    let mut events = carol.subscribe();
+    carol
+        .join(&room)
+        .await
+        .expect("carol enters with the password");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let carol_cert = carol
+        .own_user()
+        .expect("carol")
+        .cert_hash
+        .expect("carol cert");
+    let bot_cert = carol.state().users[&bot]
+        .cert_hash
+        .clone()
+        .expect("bot cert");
+    let send = |packet: &Packet| {
+        carol
+            .handle()
+            .send_plugin_data(&[bot], DATA_ID, wire::encode(packet))
+            .expect("plugin data");
+    };
+    let mut ask = async |req: u32, token: &str| {
+        let now = now_millis();
+        send(&Packet::HashRequest {
+            req,
+            channel: id,
+            from: now - WEEK_MS,
+            to: now,
+        });
+        let challenge = answer(&mut events, bot, |_| true).await;
+        let [Packet::Challenge { nonce, channel, .. }] = challenge.as_slice() else {
+            panic!("expected a challenge: {challenge:?}");
+        };
+        assert_eq!(*channel, id);
+        let macs = proof::prove(&[token.to_owned()], nonce, id, &carol_cert, &bot_cert);
+        send(&Packet::Proof { req, macs });
+        answer(&mut events, bot, |p| {
+            matches!(p, Packet::Hashes { last: true, .. } | Packet::Deny { .. })
+        })
+        .await
+    };
+    assert_eq!(
+        ask(2, "wrong").await,
+        [Packet::Deny { req: 2 }],
+        "a wrong password is denied"
+    );
+    let list = ask(3, PASSWORD).await;
+    let hashes: usize = list
+        .iter()
+        .map(|p| match p {
+            Packet::Hashes { req: 3, hashes, .. } => hashes.len(),
+            other => panic!("unexpected {other:?}"),
+        })
+        .sum();
+    assert_eq!(hashes, 1);
+    send(&Packet::Fetch {
+        req: 3,
+        wanted: wire::bitmap(1, [0]),
+    });
+    let parts = answer(&mut events, bot, |p| {
+        matches!(p, Packet::Part { last: true, .. })
+    })
+    .await;
+    let stream: Vec<u8> = parts
+        .iter()
+        .flat_map(|p| match p {
+            Packet::Part { req: 3, data, .. } => data.clone(),
+            other => panic!("unexpected {other:?}"),
+        })
+        .collect();
+    let messages = wire::decode_messages(&stream).expect("messages");
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].b, "locked secret");
+
+    running.abort();
+    for user in [carol, eve, alice, admin] {
+        user.disconnect().await.expect("leave");
+    }
 }

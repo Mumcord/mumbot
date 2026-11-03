@@ -156,10 +156,12 @@ pub async fn run(config: Arc<WebhookConfig>, music_voice: VoiceSettings) -> Resu
             None => pending().await,
         }
     };
+    // The same channel passwords the bot logs in with: with any, locked channels need the proof.
+    let tokens: Vec<String> = config.tokens.iter().map(|t| t.password.clone()).collect();
     let history = async {
         match history {
             Some((history, store)) => {
-                history::run(history, store, Arc::clone(&api), history_events).await
+                history::run(history, tokens, store, Arc::clone(&api), history_events).await
             }
             None => pending().await,
         }

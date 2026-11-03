@@ -13,6 +13,7 @@ use super::config::HistoryConfig;
 use super::core::{Core, MAX_AGE_MS, MAX_BODY, recorded_channels, records_for};
 use super::hash::{Content, content_hash};
 use super::notice;
+use super::proof;
 use super::store::{Record, Store};
 use super::wire::{self, DATA_ID, Hash, Packet, WireMessage};
 use crate::webhook::ChannelRef;
@@ -199,6 +200,7 @@ impl Holder {
         let mut holder = Self {
             core: Core::new(
                 config(&["Lobby", "Raid"], &[]),
+                Vec::new(),
                 Store::in_memory().expect("store"),
                 START,
             ),
@@ -571,4 +573,288 @@ fn the_notice_names_channels_retention_and_what_is_never_recorded() {
     all.retention_days = 1;
     assert!(notice(&all, &[]).contains("all channels"));
     assert!(notice(&all, &[]).contains("1 day "));
+}
+
+impl Holder {
+    /// Restricts entering `channel` (its own ACL denies Enter), as the server reports it.
+    fn lock(&mut self, id: u32) {
+        let mut locked = state().channels[&id].clone();
+        locked.is_enter_restricted = true;
+        self.core.on_event(Event::ChannelUpdated(locked), self.now);
+    }
+
+    fn areq(&mut self, sender: u32, req: u32, channel: u32) -> Vec<(Vec<u32>, Packet)> {
+        let packet = wire::encode(&Packet::AvailabilityRequest {
+            req,
+            channel,
+            from: self.now - MAX_AGE_MS,
+            to: self.now,
+        });
+        self.ask(sender, &packet)
+    }
+
+    fn hreq(&mut self, sender: u32, req: u32, channel: u32) -> Vec<(Vec<u32>, Packet)> {
+        let packet = wire::encode(&Packet::HashRequest {
+            req,
+            channel,
+            from: self.now - MAX_AGE_MS,
+            to: self.now,
+        });
+        self.ask(sender, &packet)
+    }
+}
+
+#[test]
+fn listeners_of_a_locked_channel_get_no_history() {
+    // Issue Mumcord#382: Listen is granted to everyone, Enter is not.
+    let mut bot = Holder::new();
+    bot.lock(RAID);
+    bot.record(START + 1_000, ALICE, RAID, "locked secret");
+    bot.advance(60_000);
+    bot.join(CAROL, "Carol", AFK, &[RAID]);
+    bot.advance(1_000);
+    assert!(bot.areq(CAROL, 1, RAID).is_empty(), "areq: silence");
+    assert_eq!(
+        bot.hreq(CAROL, 2, RAID),
+        [(vec![CAROL], Packet::Deny { req: 2 })]
+    );
+}
+
+#[test]
+fn a_lock_on_a_parent_channel_locks_its_sub_channels() {
+    let mut bot = Holder::new();
+    bot.core = Core::new(
+        config(&["Lobby/Sub"], &[]),
+        Vec::new(),
+        Store::in_memory().expect("store"),
+        START,
+    );
+    let mut state = state();
+    state.users.insert(BOT, user(BOT, "History", LOBBY, &[SUB]));
+    bot.core.resync(&state, START);
+    bot.lock(LOBBY);
+    let written = bot.core.record(
+        &text(ALICE, to_channels(&[SUB]), "sub"),
+        &state,
+        START + 1_000,
+    );
+    assert_eq!(written, 1);
+    bot.advance(60_000);
+    bot.join(CAROL, "Carol", AFK, &[SUB]);
+    bot.advance(1_000);
+    assert_eq!(
+        bot.hreq(CAROL, 3, SUB),
+        [(vec![CAROL], Packet::Deny { req: 3 })]
+    );
+}
+
+#[test]
+fn people_inside_a_locked_channel_are_answered_by_a_bot_without_tokens() {
+    let mut bot = Holder::new();
+    bot.lock(RAID);
+    bot.record(START + 1_000, ALICE, RAID, "inside");
+    bot.advance(60_000);
+    bot.join(CAROL, "Carol", RAID, &[]);
+    bot.advance(1_000);
+    assert_eq!(bot.areq(CAROL, 1, RAID).len(), 1);
+    let answer = bot.hreq(CAROL, 2, RAID);
+    assert_eq!(hashes_of(&answer).len(), 1);
+    // Leaving ends the open answer: the `get` brings no messages.
+    bot.join(CAROL, "Carol", AFK, &[RAID]);
+    let get = wire::encode(&Packet::Fetch {
+        req: 2,
+        wanted: wire::bitmap(1, [0]),
+    });
+    assert!(bot.ask(CAROL, &get).is_empty());
+}
+
+const BOT_CERT: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const CAROL_CERT: &str = "cccccccccccccccccccccccccccccccccccccccc";
+const TOKEN: &str = "s3cret";
+
+/// A bot with the password of the locked Raid, one message there, and Carol (with a
+/// certificate) inside Raid.
+fn token_holder() -> Holder {
+    let mut bot = Holder::new();
+    bot.core = Core::new(
+        config(&["Lobby", "Raid"], &[]),
+        vec![TOKEN.to_owned()],
+        Store::in_memory().expect("store"),
+        START,
+    );
+    let mut state = state();
+    if let Some(own) = state.users.get_mut(&BOT) {
+        own.cert_hash = Some(BOT_CERT.to_owned());
+    }
+    bot.core.resync(&state, START);
+    bot.lock(RAID);
+    bot.record(START + 1_000, ALICE, RAID, "locked secret");
+    bot.advance(60_000);
+    bot.carol(RAID, &[]);
+    bot.advance(1_000);
+    bot
+}
+
+impl Holder {
+    fn carol(&mut self, channel: u32, listening: &[u32]) {
+        let mut carol = user(CAROL, "Carol", channel, listening);
+        carol.cert_hash = Some(CAROL_CERT.to_owned());
+        self.core.on_event(
+            Event::UserUpdated(UserChange {
+                user: carol,
+                joined: false,
+                moved_from: None,
+                actor: None,
+            }),
+            self.now,
+        );
+    }
+
+    /// Sends `hreq` and returns the challenge's nonce, checking that a PermissionQuery is due.
+    fn challenge(&mut self, req: u32) -> proof::Nonce {
+        let packet = wire::encode(&Packet::HashRequest {
+            req,
+            channel: RAID,
+            from: self.now - MAX_AGE_MS,
+            to: self.now,
+        });
+        self.core.on_event(
+            Event::PluginData(PluginData {
+                sender: Some(CAROL),
+                data_id: DATA_ID.to_owned(),
+                data: Bytes::copy_from_slice(&packet),
+            }),
+            self.now,
+        );
+        assert_eq!(self.core.take_permission_queries(), [RAID]);
+        match self.drain_for(100).as_slice() {
+            [
+                (
+                    to,
+                    Packet::Challenge {
+                        req: r,
+                        channel,
+                        nonce,
+                    },
+                ),
+            ] => {
+                assert_eq!((to.as_slice(), *r, *channel), (&[CAROL][..], req, RAID));
+                *nonce
+            }
+            other => panic!("expected a challenge, got {other:?}"),
+        }
+    }
+
+    fn prove(
+        &mut self,
+        req: u32,
+        tokens: &[&str],
+        nonce: &proof::Nonce,
+    ) -> Vec<(Vec<u32>, Packet)> {
+        let tokens: Vec<String> = tokens.iter().map(|t| (*t).to_owned()).collect();
+        let macs = proof::prove(&tokens, nonce, RAID, CAROL_CERT, BOT_CERT);
+        self.ask(CAROL, &wire::encode(&Packet::Proof { req, macs }))
+    }
+}
+
+#[test]
+fn a_bot_with_tokens_answers_a_locked_channel_after_the_password_proof() {
+    let mut bot = token_holder();
+    let nonce = bot.challenge(5);
+    bot.core.own_permissions(RAID, true, bot.now);
+    let answer = bot.prove(5, &["wrong", TOKEN], &nonce);
+    assert_eq!(hashes_of(&answer).len(), 1);
+    let get = wire::encode(&Packet::Fetch {
+        req: 5,
+        wanted: wire::bitmap(1, [0]),
+    });
+    assert_eq!(stream_of(&bot.ask(CAROL, &get))[0].b, "locked secret");
+    // The nonce is used up: the same proof again is ignored.
+    assert!(bot.prove(5, &[TOKEN], &nonce).is_empty());
+}
+
+#[test]
+fn wrong_late_or_unconfirmed_proofs_are_denied() {
+    let deny = |req| [(vec![CAROL], Packet::Deny { req })];
+    // Wrong password.
+    let mut bot = token_holder();
+    let nonce = bot.challenge(1);
+    bot.core.own_permissions(RAID, true, bot.now);
+    assert_eq!(bot.prove(1, &["wrong"], &nonce), deny(1));
+    // The server never confirmed the bot's own Enter after the challenge (outdated token).
+    let mut bot = token_holder();
+    bot.core.own_permissions(RAID, true, bot.now - 1);
+    let nonce = bot.challenge(2);
+    assert_eq!(bot.prove(2, &[TOKEN], &nonce), deny(2));
+    let mut bot = token_holder();
+    let nonce = bot.challenge(3);
+    bot.core.own_permissions(RAID, false, bot.now);
+    assert_eq!(bot.prove(3, &[TOKEN], &nonce), deny(3));
+    // Nobody answers the challenge: denied after 10 s, a late proof is ignored.
+    let mut bot = token_holder();
+    let nonce = bot.challenge(4);
+    bot.core.own_permissions(RAID, true, bot.now);
+    assert_eq!(bot.drain_for(10_200), deny(4));
+    assert!(bot.prove(4, &[TOKEN], &nonce).is_empty());
+    // The requester left the channel before proving: the challenge is gone.
+    let mut bot = token_holder();
+    let nonce = bot.challenge(6);
+    bot.core.own_permissions(RAID, true, bot.now);
+    bot.carol(AFK, &[RAID]);
+    assert!(bot.prove(6, &[TOKEN], &nonce).is_empty());
+}
+
+#[test]
+fn a_bot_with_tokens_denies_without_certificates_or_to_listeners() {
+    // Carol has no certificate: no proof is possible.
+    let mut bot = token_holder();
+    bot.join(CAROL, "Carol", RAID, &[]);
+    assert_eq!(
+        bot.hreq(CAROL, 1, RAID),
+        [(vec![CAROL], Packet::Deny { req: 1 })]
+    );
+    assert!(bot.core.take_permission_queries().is_empty());
+    // A listener gets no challenge at all.
+    let mut bot = token_holder();
+    bot.carol(AFK, &[RAID]);
+    assert_eq!(
+        bot.hreq(CAROL, 2, RAID),
+        [(vec![CAROL], Packet::Deny { req: 2 })]
+    );
+}
+
+#[test]
+fn the_get_is_denied_once_the_bot_lost_its_enter_permission() {
+    let mut bot = token_holder();
+    let nonce = bot.challenge(5);
+    bot.core.own_permissions(RAID, true, bot.now);
+    assert_eq!(hashes_of(&bot.prove(5, &[TOKEN], &nonce)).len(), 1);
+    // The password was changed on the server.
+    bot.core.own_permissions(RAID, false, bot.now);
+    let get = wire::encode(&Packet::Fetch {
+        req: 5,
+        wanted: wire::bitmap(1, [0]),
+    });
+    assert_eq!(
+        bot.ask(CAROL, &get),
+        [(vec![CAROL], Packet::Deny { req: 5 })]
+    );
+}
+
+#[test]
+fn open_channels_need_no_proof_even_with_tokens() {
+    let mut bot = token_holder();
+    bot.record(bot.now, ALICE, LOBBY, "open");
+    bot.advance(1_000);
+    bot.carol(LOBBY, &[]);
+    bot.advance(1_000);
+    bot.carol(AFK, &[LOBBY]);
+    bot.advance(1_000);
+    let answer = bot.hreq(CAROL, 7, LOBBY);
+    assert!(bot.core.take_permission_queries().is_empty());
+    assert_eq!(
+        hashes_of(&answer).len(),
+        1,
+        "listeners of open channels are answered"
+    );
 }

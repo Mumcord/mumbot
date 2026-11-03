@@ -14,6 +14,8 @@
 //! | `get`    | bitmap (bit k = hash k)      | Send these messages from the hash list               |
 //! | `part`   | slice of the message stream  | Chunk `i` of the JSON message array                  |
 //! | `deny`   | –                            | The holder does not answer request `r`               |
+//! | `chal`   | 16-byte nonce                | Prove a password for locked channel `c` (to `hreq`)  |
+//! | `proof`  | 32-byte HMACs, at most 16    | Answer to the `chal` of request `r`                  |
 //!
 //! Every packet fits the server's plugin data limit ([`PLUGIN_DATA_MAX`]); longer data is
 //! chunked. Everything received is untrusted: the decoder checks sizes and shapes, the
@@ -21,6 +23,8 @@
 
 use mumcord_protocol::PLUGIN_DATA_MAX;
 use serde::{Deserialize, Serialize};
+
+use super::proof::{MAC_LEN, MAX_PROOFS, Mac, Nonce};
 
 /// Plugin data id of history sync packets; other ids are ignored.
 pub const DATA_ID: &str = "mumcord.history";
@@ -78,6 +82,16 @@ pub enum Packet {
     },
     Deny {
         req: u32,
+    },
+    /// The holder asks for the password proof before answering `hreq` `req` (Mumcord #382).
+    Challenge {
+        req: u32,
+        channel: u32,
+        nonce: Nonce,
+    },
+    Proof {
+        req: u32,
+        macs: Vec<Mac>,
     },
 }
 
@@ -162,6 +176,13 @@ enum Kind {
     Deny {
         r: u32,
     },
+    Chal {
+        r: u32,
+        c: u32,
+    },
+    Proof {
+        r: u32,
+    },
 }
 
 /// The bytes of `packet`. Packets built by [`chunk_hashes`], [`chunk_stream`] and with a
@@ -240,6 +261,18 @@ pub fn encode(packet: &Packet) -> Vec<u8> {
             data.clone(),
         ),
         Packet::Deny { req } => (Kind::Deny { r: *req }, Vec::new()),
+        Packet::Challenge {
+            req,
+            channel,
+            nonce,
+        } => (
+            Kind::Chal {
+                r: *req,
+                c: *channel,
+            },
+            nonce.to_vec(),
+        ),
+        Packet::Proof { req, macs } => (Kind::Proof { r: *req }, macs.concat()),
     };
     // Serializing numbers and booleans cannot fail.
     let mut out = serde_json::to_vec(&Header { v: VERSION, kind }).unwrap_or_default();
@@ -314,6 +347,21 @@ pub fn decode(data: &[u8]) -> Result<Packet, WireError> {
             data: body.to_vec(),
         }),
         Kind::Deny { r } => no_body(Packet::Deny { req: r }),
+        Kind::Chal { r, c } => Ok(Packet::Challenge {
+            req: r,
+            channel: c,
+            nonce: body.try_into().map_err(|_| WireError::Malformed)?,
+        }),
+        Kind::Proof { r } => {
+            let (macs, rest) = body.as_chunks::<MAC_LEN>();
+            if !rest.is_empty() || macs.len() > MAX_PROOFS {
+                return Err(WireError::Malformed);
+            }
+            Ok(Packet::Proof {
+                req: r,
+                macs: macs.to_vec(),
+            })
+        }
     }
 }
 
@@ -426,6 +474,15 @@ mod tests {
             wanted: bitmap(MAX_MESSAGES, 0..MAX_MESSAGES),
         });
         roundtrip(Packet::Deny { req: 4 });
+        roundtrip(Packet::Challenge {
+            req: 5,
+            channel: 2,
+            nonce: [b'\n'; 16],
+        });
+        roundtrip(Packet::Proof {
+            req: 6,
+            macs: vec![[7; 32]; MAX_PROOFS],
+        });
     }
 
     #[test]
@@ -572,5 +629,36 @@ mod tests {
             },
         ];
         assert_eq!(decode_messages(&encode_messages(&messages)), Ok(messages));
+    }
+
+    #[test]
+    fn challenges_and_proofs_have_exact_sizes() {
+        let chal = |body: &[u8]| {
+            let mut data = br#"{"v":1,"t":"chal","r":1,"c":2}"#.to_vec();
+            data.push(b'\n');
+            data.extend_from_slice(body);
+            decode(&data)
+        };
+        assert_eq!(chal(&[0; 15]), Err(WireError::Malformed));
+        assert_eq!(chal(&[0; 17]), Err(WireError::Malformed));
+        assert!(chal(&[0; 16]).is_ok());
+        let proof = |body: &[u8]| {
+            let mut data = br#"{"v":1,"t":"proof","r":1}"#.to_vec();
+            data.push(b'\n');
+            data.extend_from_slice(body);
+            decode(&data)
+        };
+        assert_eq!(proof(&[0; 33]), Err(WireError::Malformed));
+        assert_eq!(
+            proof(&vec![0; 32 * (MAX_PROOFS + 1)]),
+            Err(WireError::Malformed)
+        );
+        assert_eq!(
+            proof(&[]),
+            Ok(Packet::Proof {
+                req: 1,
+                macs: Vec::new()
+            })
+        );
     }
 }
