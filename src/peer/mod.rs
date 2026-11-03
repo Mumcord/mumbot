@@ -27,10 +27,10 @@ use tokio::sync::broadcast;
 use tokio::time::Instant;
 
 pub use config::{PeerConfig, Secret};
-pub use relay::{HttpRelay, Pair, PairError, RelayApi, Status};
+pub use relay::{BroadcastStatus, HttpRelay, Pair, PairError, RelayApi, Status};
 
 use wire::{
-    PeerMessage, RelayAnnouncement, RelayState as State, RelayToken, RequestId,
+    PeerMessage, RelayAnnouncement, RelayState as State, RelayToken, RelayUse, RequestId,
     TokenErrorReason as TokenError,
 };
 
@@ -39,6 +39,9 @@ use wire::{
 struct TokenRequest {
     rid: RequestId,
     peer: u32,
+    /// What the pair is for; a request without it comes from an older client that only shared
+    /// screens through the relay.
+    relay_use: RelayUse,
 }
 
 /// How often the relay's status is polled (FR-4.25).
@@ -178,11 +181,23 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
                 if data.data_id == wire::HELLO_ID && wire::is_p2p_hello(&data.data) {
                     self.on_hello(sender).await;
                 } else if data.data_id == wire::DATA_ID
-                    && let Ok(PeerMessage::TokenRequest { rid, peer }) =
-                        PeerMessage::decode(&data.data)
+                    && let Ok(PeerMessage::TokenRequest {
+                        rid,
+                        peer,
+                        relay_use,
+                    }) = PeerMessage::decode(&data.data)
                 {
-                    self.on_request(sender, TokenRequest { rid, peer }, now)
-                        .await;
+                    let relay_use = relay_use.unwrap_or(RelayUse::ScreenShare);
+                    self.on_request(
+                        sender,
+                        TokenRequest {
+                            rid,
+                            peer,
+                            relay_use,
+                        },
+                        now,
+                    )
+                    .await;
                 }
             }
             Event::UserUpdated(change) => {
@@ -259,6 +274,8 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
             fingerprint: fingerprint(&status.fp)?,
             state: self.state,
             seq: self.seq,
+            uses: status.announced_uses(),
+            broadcast: status.broadcast.map(|b| b.max_viewers),
         }))
     }
 
@@ -300,7 +317,7 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
     async fn on_request(&mut self, sender: u32, request: TokenRequest, now: Instant) {
         let result = match self.check(sender, &request, now).await {
             Ok((a, b)) => {
-                let pair = self.pair(&a, &b).await;
+                let pair = self.pair(&a, &b, request.relay_use).await;
                 if pair.is_ok() {
                     self.pairs.insert(pair_key(&a, &b));
                 }
@@ -386,8 +403,13 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
     }
 
     /// A token for the pair from the relay, with its validity in seconds.
-    async fn pair(&self, a: &str, b: &str) -> Result<(RelayToken, u16), TokenError> {
-        match self.relay.create_pair(a, b).await {
+    async fn pair(
+        &self,
+        a: &str,
+        b: &str,
+        relay_use: RelayUse,
+    ) -> Result<(RelayToken, u16), TokenError> {
+        match self.relay.create_pair(a, b, relay_use).await {
             Ok(pair) => match RelayToken::parse(&pair.tok) {
                 Ok(token) => Ok((token, u16::try_from(pair.expires_in).unwrap_or(u16::MAX))),
                 Err(_) => {
@@ -397,6 +419,7 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
             },
             Err(PairError::Full) => Err(TokenError::RelayFull),
             Err(PairError::RateLimited) => Err(TokenError::RateLimited),
+            Err(PairError::UseNotAllowed) => Err(TokenError::UseNotAllowed),
             Err(PairError::Unavailable(error)) => {
                 tracing::warn!(%error, "peer: no token from the relay");
                 Err(TokenError::RelayDown)

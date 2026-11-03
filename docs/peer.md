@@ -44,7 +44,7 @@ official Mumble clients ignore. Each message is compact JSON of at most 1000 byt
    and answers it, to that client only:
 
    ```json
-   {"v":1,"t":"relay","host":"relay.example.org","udp":443,"tcp":443,"fp":"<64 hex>","state":"up","seq":4}
+   {"v":1,"t":"relay","host":"relay.example.org","udp":443,"tcp":443,"fp":"<64 hex>","state":"up","seq":4,"u":["img","file","scr"],"bc":25}
    ```
 
    `host`, ports and `fp` (SHA-256 of the relay certificate) come from the relay's status, so the
@@ -57,11 +57,19 @@ official Mumble clients ignore. Each message is compact JSON of at most 1000 byt
    bot answers each hello with its own, which says it is a bot (see
    [How Mumcord clients see the bot](modules.md#how-mumcord-clients-see-the-bot)).
 
+   `u` lists what the relay allows (`img` full-size images, `file` files, `scr` screen sharing; it
+   comes from `uses` in the relay's status, and a relay without `uses` leaves `u` out, which means
+   all) and `bc` is the relay's maximum viewers per broadcast (`broadcast.max_viewers`; left out when
+   the relay offers no broadcasts). When either changes, every remembered client gets a new
+   announcement.
+
 2. **Token.** A client that wants a relayed connection to one other person asks the bot:
 
    ```json
-   {"v":1,"t":"token-req","rid":"<16 hex>","peer":<session of the other person>}
+   {"v":1,"t":"token-req","rid":"<16 hex>","peer":<session of the other person>,"use":"img|file|scr"}
    ```
+
+   `use` says what the pair is for; a request without it (an older client) counts as `scr`.
 
    The requester is the session the server stamped on the message, never a field of it. Both must
    be online with a certificate, both must have sent a hello with `p2p`, both must be allowed to
@@ -82,6 +90,7 @@ official Mumble clients ignore. Each message is compact JSON of at most 1000 byt
    | `rate-limited` | More than 6 requests from this session in a minute, more than `cert_requests_per_minute` (10) from all sessions with this certificate in a minute, more than `max_pairs_per_cert` (4) open pairs with this certificate, or the relay asked the bot to slow down. |
    | `relay-down` | The relay is down or did not answer. |
    | `relay-full` | The relay has no room for another session. |
+   | `use-not-allowed` | The relay has switched off the requested use (`403` from `POST /v1/pairs`). |
 
    A request without a valid `rid` (16 lowercase hex digits) is ignored.
 

@@ -10,8 +10,8 @@
 use serde::Deserialize;
 
 pub use mumcord_p2p::{
-    PEER_DATA_ID as DATA_ID, PeerMessage, RelayAnnouncement, RelayState, RelayToken, RequestId,
-    TokenErrorReason,
+    PEER_DATA_ID as DATA_ID, PeerMessage, RelayAnnouncement, RelayState, RelayToken, RelayUse,
+    RequestId, TokenErrorReason,
 };
 
 /// Plugin data id of the hello every Mumcord client sends on connect and to people who join.
@@ -56,9 +56,13 @@ mod tests {
         serde_json::from_slice(&message.encode().expect("encodes")).expect("json")
     }
 
-    fn decode_request(data: &[u8]) -> Option<(RequestId, u32)> {
+    fn decode_request(data: &[u8]) -> Option<(RequestId, u32, Option<RelayUse>)> {
         match PeerMessage::decode(data) {
-            Ok(PeerMessage::TokenRequest { rid, peer }) => Some((rid, peer)),
+            Ok(PeerMessage::TokenRequest {
+                rid,
+                peer,
+                relay_use,
+            }) => Some((rid, peer, relay_use)),
             _ => None,
         }
     }
@@ -72,11 +76,14 @@ mod tests {
             fingerprint: [0xab; 32],
             state: RelayState::Up,
             seq: 4,
+            uses: Some(vec![RelayUse::Images, RelayUse::Files]),
+            broadcast: Some(25),
         });
         assert_eq!(
             json(&relay),
             serde_json::json!({"v":1,"t":"relay","host":"relay.example.org","udp":443,"tcp":443,
-                "fp":"ab".repeat(32),"state":"up","seq":4})
+                "fp":"ab".repeat(32),"state":"up","seq":4,
+                "u":["img","file"],"bc":25})
         );
         let token = PeerMessage::Token {
             rid: RID,
@@ -97,6 +104,7 @@ mod tests {
             (TokenErrorReason::RateLimited, "rate-limited"),
             (TokenErrorReason::RelayDown, "relay-down"),
             (TokenErrorReason::RelayFull, "relay-full"),
+            (TokenErrorReason::UseNotAllowed, "use-not-allowed"),
         ];
         for (reason, text) in reasons {
             assert_eq!(
@@ -110,7 +118,13 @@ mod tests {
     fn requests_are_read_leniently_and_everything_else_is_ignored() {
         assert_eq!(
             decode_request(br#"{"v":3,"t":"token-req","rid":"0123456789abcdef","peer":9,"x":1}"#),
-            Some((RID, 9))
+            Some((RID, 9, None))
+        );
+        assert_eq!(
+            decode_request(
+                br#"{"v":1,"t":"token-req","rid":"0123456789abcdef","peer":9,"use":"file"}"#
+            ),
+            Some((RID, 9, Some(RelayUse::Files)))
         );
         for bad in [
             &br#"{"v":0,"t":"token-req","rid":"0123456789abcdef","peer":9}"#[..],

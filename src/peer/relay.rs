@@ -3,8 +3,9 @@
 //!
 //! HTTP/1.1 with JSON and `Authorization: Bearer <secret>`:
 //! - `GET /v1/status` → `{"boot_id","host","udp","tcp","fp",…}`
-//! - `POST /v1/pairs` with `{"a","b"}` (two certificate hashes) → `201 {"tok","expires_in"}`,
-//!   `503` when the relay is full, `429` when the bot asks too often
+//! - `POST /v1/pairs` with `{"a","b","use"}` (two certificate hashes and `images|files|screen_share`)
+//!   → `201 {"tok","expires_in"}`, `403` when the use is disabled, `503` when the relay is
+//!   full, `429` when the bot asks too often
 //! - `DELETE /v1/peers/{hash}` → `204`; the relay drops the hash from all pairs
 //!
 //! Three calls do not justify an HTTP library: the client below sends one request per
@@ -24,6 +25,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 
+use mumcord_p2p::RelayUse;
+
 use crate::peer::config::{ApiUrl, PeerConfig, Secret, normalize_sha256};
 
 /// Upper bound for one API call; the bot never waits longer on the relay.
@@ -42,7 +45,31 @@ pub struct Status {
     pub tcp: u16,
     /// SHA-256 of the relay certificate.
     pub fp: String,
+    /// The uses the relay allows, by its names (`images`, `files`, `screen_share`). `None` for a
+    /// relay that predates the setting: it allows everything.
+    #[serde(default)]
+    pub uses: Option<Vec<String>>,
+    /// Broadcast limits; absent when the relay offers no broadcasts.
+    #[serde(default)]
+    pub broadcast: Option<BroadcastStatus>,
 }
+
+/// The relay's broadcast limits from `GET /v1/status`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct BroadcastStatus {
+    pub max_viewers: u16,
+}
+
+/// The relay's name for `relay_use` in `/v1/status` and `POST /v1/pairs`.
+fn api_use_name(relay_use: RelayUse) -> &'static str {
+    match relay_use {
+        RelayUse::Images => "images",
+        RelayUse::Files => "files",
+        RelayUse::ScreenShare => "screen_share",
+    }
+}
+
+const ALL_USES: [RelayUse; 3] = [RelayUse::Images, RelayUse::Files, RelayUse::ScreenShare];
 
 impl Status {
     /// Checks what goes out to clients, so the bot never announces something they must reject
@@ -58,7 +85,33 @@ impl Status {
         if self.boot_id.is_empty() || self.boot_id.len() > 64 {
             bail!("relay API status: invalid boot_id");
         }
+        if self.broadcast.is_some_and(|b| b.max_viewers == 0) {
+            bail!("relay API status: invalid broadcast max_viewers");
+        }
+        // Names this bot does not know are ignored (a newer relay); the list is kept in a fixed
+        // order so an unchanged relay never looks changed.
+        if let Some(uses) = &mut self.uses {
+            let known = |name: &str| uses.iter().any(|u| u == name);
+            let normalized: Vec<String> = ALL_USES
+                .into_iter()
+                .map(api_use_name)
+                .filter(|name| known(name))
+                .map(str::to_owned)
+                .collect();
+            *uses = normalized;
+        }
         Ok(self)
+    }
+
+    /// The allowed uses as announced to clients (`u`); `None` allows all.
+    pub fn announced_uses(&self) -> Option<Vec<RelayUse>> {
+        let uses = self.uses.as_ref()?;
+        Some(
+            ALL_USES
+                .into_iter()
+                .filter(|u| uses.iter().any(|name| name == api_use_name(*u)))
+                .collect(),
+        )
     }
 }
 
@@ -76,15 +129,21 @@ pub enum PairError {
     Full,
     /// `429`: the bot asked too often.
     RateLimited,
+    /// `403`: the relay does not allow this use.
+    UseNotAllowed,
     /// Anything else: unreachable, wrong secret, unexpected answer.
     Unavailable(anyhow::Error),
 }
 
 pub trait RelayApi {
     fn status(&self) -> impl Future<Output = Result<Status>> + Send;
-    /// Creates a token for the pair of certificate hashes `a` and `b`.
-    fn create_pair(&self, a: &str, b: &str)
-    -> impl Future<Output = Result<Pair, PairError>> + Send;
+    /// Creates a token for the pair of certificate hashes `a` and `b`, for `relay_use`.
+    fn create_pair(
+        &self,
+        a: &str,
+        b: &str,
+        relay_use: RelayUse,
+    ) -> impl Future<Output = Result<Pair, PairError>> + Send;
     /// Drops `hash` from all pairs and closes its sessions.
     fn remove_peer(&self, hash: &str) -> impl Future<Output = Result<()>> + Send;
 }
@@ -210,6 +269,8 @@ fn parse_answer(raw: &[u8]) -> Result<Answer> {
 struct PairRequest<'a> {
     a: &'a str,
     b: &'a str,
+    #[serde(rename = "use")]
+    relay_use: &'static str,
 }
 
 impl RelayApi for HttpRelay {
@@ -226,9 +287,13 @@ impl RelayApi for HttpRelay {
         status.validate()
     }
 
-    async fn create_pair(&self, a: &str, b: &str) -> Result<Pair, PairError> {
-        let body = serde_json::to_vec(&PairRequest { a, b })
-            .map_err(|e| PairError::Unavailable(e.into()))?;
+    async fn create_pair(&self, a: &str, b: &str, relay_use: RelayUse) -> Result<Pair, PairError> {
+        let body = serde_json::to_vec(&PairRequest {
+            a,
+            b,
+            relay_use: api_use_name(relay_use),
+        })
+        .map_err(|e| PairError::Unavailable(e.into()))?;
         let answer = self
             .call("POST", "/v1/pairs", Some(body))
             .await
@@ -237,6 +302,7 @@ impl RelayApi for HttpRelay {
             200 | 201 => serde_json::from_slice(&answer.body).map_err(|e| {
                 PairError::Unavailable(anyhow!("relay API pairs: invalid answer: {e}"))
             }),
+            403 => Err(PairError::UseNotAllowed),
             503 => Err(PairError::Full),
             429 => Err(PairError::RateLimited),
             status => Err(PairError::Unavailable(anyhow!(
@@ -371,6 +437,25 @@ mod tests {
     }
 
     #[test]
+    fn unknown_and_repeated_uses_are_dropped_from_the_status() {
+        let status: Status = serde_json::from_str(&(
+            r#"{"boot_id":"b","host":"relay.test","udp":1,"tcp":1,"fp":""#.to_owned()
+                + &"ab".repeat(32)
+                + r#"","uses":["screen_share","voice","images","images"],"broadcast":{"max_viewers":25}}"#),
+        )
+        .expect("parses");
+        let status = status.validate().expect("valid");
+        assert_eq!(
+            status.uses,
+            Some(vec!["images".to_owned(), "screen_share".to_owned()])
+        );
+        assert_eq!(
+            status.announced_uses(),
+            Some(vec![RelayUse::Images, RelayUse::ScreenShare])
+        );
+    }
+
+    #[test]
     fn status_is_checked_before_it_is_announced() {
         let good = Status {
             boot_id: "0123456789abcdef".into(),
@@ -378,9 +463,12 @@ mod tests {
             udp: 443,
             tcp: 443,
             fp: "AB".repeat(32),
+            uses: None,
+            broadcast: None,
         };
         assert_eq!(good.clone().validate().expect("valid").fp, "ab".repeat(32));
-        let bad: [fn(&mut Status); 7] = [
+        let bad: [fn(&mut Status); 8] = [
+            |s| s.broadcast = Some(BroadcastStatus { max_viewers: 0 }),
             |s| s.host = "0.0.0.0".into(),
             |s| s.host = "224.0.0.1".into(),
             |s| s.host = "255.255.255.255".into(),

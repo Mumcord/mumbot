@@ -6,8 +6,14 @@ All notable changes to Mumbot are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- The peer module announces which uses the relay allows (images, files, screen sharing) and its broadcast viewer limit to clients.
+- Token requests carry the use they are for; the bot passes it to the relay and answers `use-not-allowed` when the relay has switched that use off. A request without a use counts as screen sharing.
+
 ### Changed
 
+- The peer module now builds against the unreleased Mumcord crates from Git until `mumcord-p2p` 0.7.0 is published.
 - Updated the MP3 decoder library (symphonia) to 0.6.
 
 ## [0.4.1] - 2026-11-01
