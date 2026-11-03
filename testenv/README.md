@@ -22,6 +22,20 @@ On the first start `up.sh` writes the channels Lobby (id 1), Raid (id 2) and AFK
     testenv/up.sh
     MUMBOT_LIVE=1 cargo test --features tester -- --ignored --test-threads=1
 
+### Broadcast tests against a real relay
+
+`tests/peer_broadcast_live.rs` needs a real mumpeer relay and runs against the Mumble server of a
+[mumpeer](https://github.com/Mumcord/mumpeer) checkout's `testenv/` instead (its relay bot stays
+stopped, the test runs the peer bot itself). Run it once per relay profile; each test skips itself
+when the running profile is not its own:
+
+    MUMPEER_PROFILE=all <mumpeer>/testenv/up.sh --no-bot        # then again with no-broadcast
+    MUMBOT_LIVE=1 MUMBOT_PEER_RELAY=1 MUMBOT_TESTENV_DIR=<mumpeer>/testenv MUMBOT_PORT_BASE=44758 \
+      cargo test --features tester --test peer_broadcast_live -- --ignored --test-threads=1
+    <mumpeer>/testenv/down.sh
+
+Without `MUMBOT_PEER_RELAY=1` (as in CI) these tests are skipped.
+
 ## Parallel instances
 
     MUMBOT_PORT_BASE=44838 MUMBOT_PROJECT=qa1 testenv/up.sh

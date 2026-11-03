@@ -94,7 +94,75 @@ official Mumble clients ignore. Each message is compact JSON of at most 1000 byt
 
    A request without a valid `rid` (16 lowercase hex digits) is ignored.
 
-3. **Leaving.** When the last remembered session with a certificate leaves the server or changes
+3. **Broadcasts.** A screen share can be sent to the relay once and copied there to every viewer
+   (Mumcord spec 07, relay fan-out). Only sessions whose hello lists both `p2p` and
+   `screen-share` take part, sharer and viewer alike, and both must have a certificate and be
+   allowed to use the relay ([Who gets tokens](#who-gets-tokens)).
+
+   The sharer asks for a broadcast for up to `max` viewers (the client uses the `bc` it was
+   announced; the relay caps it at its own limit):
+
+   ```json
+   {"v":1,"t":"bcast-req","rid":"<16 hex>","max":25}
+   ```
+
+   The bot creates it at the relay for the sharer's certificate and answers the sharer with the
+   broadcast id and the publisher token:
+
+   ```json
+   {"v":1,"t":"bcast","rid":"<16 hex>","id":"<16 hex>","tok":"<43 base64url>","ttl":120}
+   ```
+
+   A session runs one broadcast at a time: a new `bcast-req` ends its previous broadcast.
+
+   When someone presses Watch, the sharer decides (not full, viewer not blocked) and admits them:
+
+   ```json
+   {"v":1,"t":"bcast-admit","rid":"<16 hex>","id":"<16 hex>","viewer":<viewer session>}
+   ```
+
+   Only the session that created the broadcast may admit. The viewer must be online, another
+   user than the sharer (not a second session of the same certificate), and in the sharer's
+   channel. The bot then registers the viewer's certificate at the relay and sends the subscriber
+   token to the viewer only:
+
+   ```json
+   {"v":1,"t":"bcast-tok","id":"<16 hex>","tok":"<43 base64url>","ttl":120,"sharer":<sharer session>}
+   ```
+
+   The sharer removes a viewer with `{"v":1,"t":"bcast-kick","id":"<16 hex>","viewer":<session>}`;
+   the bot removes that viewer's certificate at the relay, which tells the sharer the viewer is
+   gone (so it can change the media key). A kick is never answered and only works for viewers the
+   bot admitted to that sharer's broadcast.
+
+   The bot also cleans up by itself:
+
+   - An admitted viewer leaves the server, changes certificate or moves out of the sharer's
+     channel: removed at the relay (unless another admitted session with the same certificate
+     still watches).
+   - The sharer moves to another channel: every viewer not in the new channel is removed; the
+     broadcast keeps running.
+   - The sharer leaves or changes certificate: the broadcast is deleted at the relay.
+   - After a reconnect of the bot or a relay restart the bot forgets its broadcasts; the relay ends
+     unused ones after 60 seconds without frames.
+
+   A refused `bcast-req` or `bcast-admit` gets `{"v":1,"t":"bcast-err","rid":"…","r":"…"}` to the
+   sender with one of:
+
+   | `r` | Why |
+   | --- | --- |
+   | `denied` | The sender or viewer has no certificate, sent no hello with `p2p` and `screen-share`, may not use the relay, or the viewer is the sharer, the bot or not on the server; the sender is not the broadcast's publisher; or the broadcast is unknown or has already ended at the relay. |
+   | `not-same-channel` | The viewer is not in the sharer's channel. |
+   | `full` | The broadcast has as many viewers as it allows. |
+   | `rate-limited` | More than 60 `bcast-req` and `bcast-admit` from this session in a minute. |
+   | `relay-down` | The relay is down or did not answer. |
+   | `relay-full` | The relay runs as many broadcasts as it allows, or none at all (`max_broadcasts = 0`). |
+   | `use-not-allowed` | The relay has switched screen sharing off. |
+
+   The relay itself never sees Mumble sessions, only certificate hashes, and cannot read the
+   stream: the media is encrypted end to end between sharer and viewers.
+
+4. **Leaving.** When the last remembered session with a certificate leaves the server or changes
    certificate, the bot tells the relay to drop that certificate hash; the relay closes its
    sessions and pairs. A second device with the same certificate keeps its relay session while
    the other one leaves.
@@ -131,6 +199,10 @@ times out after 5 seconds.
 | `GET /v1/status` | `200 {"boot_id","host","udp","tcp","fp",…}` | Every 30 seconds; the first check right at start. A new `boot_id` means the relay restarted. |
 | `POST /v1/pairs` with `{"a":"<cert hash>","b":"<cert hash>"}` | `201 {"tok","expires_in"}`, `503` relay full, `429` rate limited | For every accepted token request. |
 | `DELETE /v1/peers/{cert hash}` | `204` | When the last remembered session with that certificate leaves or changes certificate, or loses access. |
+| `POST /v1/broadcasts` with `{"publisher":"<cert hash>","max_viewers":n}` | `201 {"id","tok","expires_in"}`, `403` screen sharing off, `503` no room for another broadcast | For every accepted `bcast-req`. |
+| `POST /v1/broadcasts/{id}/viewers` with `{"viewer":"<cert hash>"}` | `201 {"tok","expires_in"}`, `409` broadcast full, `404` broadcast ended | For every accepted `bcast-admit`. |
+| `DELETE /v1/broadcasts/{id}/viewers/{cert hash}` | `204` | On `bcast-kick`, and when an admitted viewer leaves or moves out of the sharer's channel. |
+| `DELETE /v1/broadcasts/{id}` | `204` | When the sharer leaves or starts a new broadcast. |
 
 Over `https` the relay's self-signed certificate is pinned with `api_fp` instead of being checked
 against certificate authorities; TLS 1.3 only. Plain `http` is meant for a relay on the same host
@@ -141,5 +213,5 @@ container network) and logs a warning.
 ## Logs
 
 `RUST_LOG=mumbot=info` shows when the bot connected, when the relay became reachable, changed or
-went down, and failed API calls. No user names, sessions, certificate hashes, tokens or the secret
+went down, and failed API calls. No user names, broadcast ids, sessions, certificate hashes, tokens or the secret
 are logged.
