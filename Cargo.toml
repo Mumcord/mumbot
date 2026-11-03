@@ -12,7 +12,7 @@ publish = false
 # Published by the Mumcord client project; a minor bump (by hand or Dependabot) must pass the
 # live tests. mumcord-codec (Opus without device I/O, so static builds need no ALSA) gives the
 # bots' voice the same codec settings as the client.
-mumcord-protocol = "0.5"
+mumcord-protocol = "0.6"
 mumcord-codec = "0.5"
 bytes = "1"
 hound = { version = "3.5", optional = true }
