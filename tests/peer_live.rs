@@ -306,7 +306,7 @@ async fn clients_learn_the_relay_and_a_pair_gets_a_token() {
     let (alice_cert, bob_cert) = (cert_of(&alice), cert_of(&bob));
     assert_eq!(
         pair.body,
-        serde_json::json!({"a": alice_cert, "b": bob_cert})
+        serde_json::json!({"a": alice_cert, "b": bob_cert, "use": "screen_share"})
     );
 
     bob.disconnect().await.expect("bob leaves");
