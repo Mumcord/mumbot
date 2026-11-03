@@ -31,7 +31,8 @@ same config section.
   can read stops the bot at start; in Docker, where mounted secrets are often readable by
   everyone in the container, use the environment variable. Never put it into `bot.toml` or Git.
 - **Only registered users get relay tokens** by default (see
-  [Who gets tokens](#who-gets-tokens)), so register everyone who should use the relay.
+  [Who gets tokens](#who-gets-tokens)), so register everyone who should use the relay. With
+  `allowed_groups`, only the members of the configured groups get them.
 
 ## How it works
 
@@ -84,7 +85,7 @@ official Mumble clients ignore. Each message is compact JSON of at most 1000 byt
 
    | `r` | Why |
    | --- | --- |
-   | `denied` | The requester has no certificate or sent no `p2p` hello, or asked for itself, the bot, a peer without certificate or a second session of the same identity; or the requester or the peer may not use the relay (a guest while `registered_only` is on). The bot's debug log tells these apart; the client only knows this list of reasons. |
+   | `denied` | The requester has no certificate or sent no `p2p` hello, or asked for itself, the bot, a peer without certificate or a second session of the same identity; or the requester or the peer may not use the relay (a guest while `registered_only` is on, or not a member of an `allowed_groups` group); or the bot cannot read the groups. The bot's debug log tells these apart; the client only knows this list of reasons. |
    | `peer-gone` | The peer is not on the server. |
    | `peer-not-mumcord` | The peer sent no hello with `p2p`. |
    | `rate-limited` | More than 6 requests from this session in a minute, more than `cert_requests_per_minute` (10) from all sessions with this certificate in a minute, more than `max_pairs_per_cert` (4) open pairs with this certificate, or the relay asked the bot to slow down. |
@@ -182,6 +183,30 @@ people the server knows. Both users of a pair must be allowed.
   traffic. The per-certificate limits below still apply, but new certificates cost nothing. Only
   turn it off on a server where every guest is trusted, for example a private server with a
   password.
+- **`allowed_groups = ["…"]`: members of these groups only** ([#31](https://github.com/Mumcord/mumbot/issues/31)).
+  When at least one group is configured it replaces the rule above: only the members of one of the
+  listed groups get tokens, as requester and as peer, and both users of a pair must be members.
+
+  ```toml
+  [peer]
+  api_url = "http://127.0.0.1:7480"
+  allowed_groups = ["Relay users"]
+  group_channel = "Root/Support"   # optional, "Root" by default
+  ```
+
+  - A group's members are the users the server lists for it: those it inherited from the parent
+    channel, plus those added in this channel, minus those removed in it. Group members are
+    registered users, so `registered_only` is implied.
+  - The bot needs the **Write** permission on `group_channel`: standard servers answer an ACL query
+    only for people who may write its ACLs. Give the bot that permission in the server's channel
+    ACL (an admin decision, nothing on the server side is changed). Without it the bot refuses to
+    start, and so does a configured group that the channel does not define — the bot never falls
+    back to allowing everyone. During running, a read that fails (permission taken away, or the
+    server does not answer within 5 seconds) refuses tokens until the next successful read.
+  - The server never tells clients that a group's members changed, so the bot reads them again for
+    every token request (at most one query per 10 seconds, so a busy server is not flooded) and at
+    least every 60 seconds. Someone who loses access is dropped at the relay within a minute and
+    gets no new token.
 
 Per certificate, the bot also allows at most `cert_requests_per_minute` (default 10) token
 requests per minute across all sessions, and at most `max_pairs_per_cert` (default 4, the relay's

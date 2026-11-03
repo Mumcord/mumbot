@@ -6,7 +6,8 @@
 //! announcement, and one asks for a token for the other. The mock relay checks the API calls
 //! (mumcord spec 04, sections 6.4 and 6.6, FR-4.22 to FR-4.28). Relay access (mumbot#29): only
 //! registered users unless `registered_only` is off; a certificate is dropped when its last
-//! session leaves.
+//! session leaves. Issue #31: `allowed_groups` restricts tokens to the members of a group the bot
+//! reads from the server, and a lost membership is revoked.
 
 #![cfg(feature = "tester")]
 
@@ -15,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use mumbot::peer::PeerConfig;
-use mumbot::protocol::Event;
+use mumbot::protocol::{Event, permissions};
 use mumbot::voice_settings::VoiceSettings;
 use mumbot::webhook::{ApiKey, ChannelRef, HttpConfig, ModulesConfig, ServerConfig, WebhookConfig};
 use mumbot::{Bot, BotConfig, MessageCheck, Module, UserCheck, env, modules};
@@ -238,7 +239,18 @@ async fn next_peer_message(
 }
 
 async fn wait_for_call(calls: &Arc<Mutex<Vec<Call>>>, method: &str, path: &str) -> Call {
-    for _ in 0..100 {
+    wait_for_call_within(calls, method, path, Duration::from_secs(10)).await
+}
+
+/// A relay API call within `timeout`.
+async fn wait_for_call_within(
+    calls: &Arc<Mutex<Vec<Call>>>,
+    method: &str,
+    path: &str,
+    timeout: Duration,
+) -> Call {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
         let found = calls
             .lock()
             .expect("lock")
@@ -248,9 +260,11 @@ async fn wait_for_call(calls: &Arc<Mutex<Vec<Call>>>, method: &str, path: &str) 
         if let Some(call) = found {
             return call;
         }
+        if tokio::time::Instant::now() >= deadline {
+            panic!("relay API call {method} {path} not seen, calls so far: {calls:?}");
+        }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    panic!("relay API call {method} {path} not seen");
 }
 
 #[tokio::test]
@@ -586,4 +600,138 @@ async fn webhook_and_peer_modules_share_one_connection() {
 
     running.abort();
     alice.disconnect().await.expect("alice leaves");
+}
+
+fn user_id(bot: &Bot) -> u32 {
+    bot.own_user()
+        .expect("own user")
+        .user_id
+        .expect("registered")
+}
+
+/// Issue #31: `allowed_groups` replaces the registered rule, and a membership the bot is told
+/// about by nobody is read again per request and periodically.
+#[tokio::test]
+#[ignore = "needs testenv and MUMBOT_LIVE=1"]
+async fn group_members_get_tokens_and_a_lost_membership_is_revoked() {
+    if !live() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (relay_url, calls) = mock_relay().await;
+    let (alice_name, bob_name, bot_name) = (unique("alice"), unique("bob"), unique("peerbot"));
+    let channel = "Root/Raid";
+
+    // The bot has to be registered before the admin can grant it the Write permission the group
+    // read needs, so its user id is taken while the module is not running yet.
+    let bot = Bot::connect(client(dir.path(), &bot_name))
+        .await
+        .expect("bot");
+    bot.register().await.expect("self-register");
+    let bot_id = user_id(&bot);
+    bot.disconnect().await.expect("bot leaves");
+
+    let alice = Bot::connect(client(dir.path(), &alice_name))
+        .await
+        .expect("alice");
+    let bob = Bot::connect(client(dir.path(), &bob_name))
+        .await
+        .expect("bob");
+    let mut alice_events = alice.subscribe();
+    register(&[&alice, &bob]).await;
+    let (alice_id, bob_id) = (user_id(&alice), user_id(&bob));
+
+    let admin = Bot::connect(BotConfig::superuser(env::test_port()))
+        .await
+        .expect("superuser");
+    let groups = [("Relay", &[alice_id, bob_id][..]), ("Bots", &[bot_id][..])];
+    admin
+        .write_groups(channel, &groups, permissions::WRITE, "Bots")
+        .await
+        .expect("the groups are written");
+
+    let base = peer_config(dir.path(), &bot_name, &relay_url, server_pin());
+    let config = Arc::new(WebhookConfig {
+        peer: Some(PeerConfig {
+            allowed_groups: vec!["Relay".to_owned()],
+            group_channel: channel.to_owned(),
+            ..base.peer.as_ref().expect("peer").clone()
+        }),
+        ..base.as_ref().clone()
+    });
+    let running = tokio::spawn(modules::run(config, VoiceSettings::default()));
+    alice
+        .wait_user(&bot_name, &UserCheck::default())
+        .await
+        .expect("the peer bot logs in");
+    let bot_session = session_of(&alice, &bot_name);
+    send_hello(bot_session, &[&alice, &bob]).await;
+    assert_eq!(
+        next_peer_message(&mut alice_events, bot_session).await["t"],
+        "relay"
+    );
+
+    request_token(&alice, bot_session, session_of(&alice, &bob_name));
+    assert_eq!(
+        next_peer_message(&mut alice_events, bot_session).await["t"],
+        "token",
+        "both users of the pair are members"
+    );
+
+    // Bob is no longer a member, which the server never reports: the next request reads the
+    // groups again, and the periodic read drops him at the relay.
+    let groups = [("Relay", &[alice_id][..]), ("Bots", &[bot_id][..])];
+    admin
+        .write_groups(channel, &groups, permissions::WRITE, "Bots")
+        .await
+        .expect("the group is rewritten");
+    tokio::time::sleep(Duration::from_secs(12)).await;
+    request_token(&alice, bot_session, session_of(&alice, &bob_name));
+    assert_eq!(
+        next_peer_message(&mut alice_events, bot_session).await["r"],
+        "denied",
+        "a former member gets no token"
+    );
+    let bob_cert = cert_of(&bob);
+    let dropped = wait_for_call_within(
+        &calls,
+        "DELETE",
+        &format!("/v1/peers/{bob_cert}"),
+        Duration::from_secs(75),
+    )
+    .await;
+    assert!(dropped.authorized);
+
+    // Undo so the shared test channel stays clean.
+    admin.clear_acl(channel).await.expect("acl cleared");
+    running.abort();
+    alice.disconnect().await.expect("alice leaves");
+    bob.disconnect().await.expect("bob leaves");
+    admin.disconnect().await.expect("admin leaves");
+}
+
+#[tokio::test]
+#[ignore = "needs testenv and MUMBOT_LIVE=1"]
+async fn group_access_without_the_write_permission_refuses_to_start() {
+    if !live() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (relay_url, _) = mock_relay().await;
+    let base = peer_config(dir.path(), &unique("peerbot"), &relay_url, server_pin());
+    let config = Arc::new(WebhookConfig {
+        peer: Some(PeerConfig {
+            allowed_groups: vec!["Relay".to_owned()],
+            ..base.peer.as_ref().expect("peer").clone()
+        }),
+        ..base.as_ref().clone()
+    });
+    let result = tokio::time::timeout(
+        Duration::from_secs(20),
+        modules::run(config, VoiceSettings::default()),
+    )
+    .await
+    .expect("the bot answers the ACL query");
+    let error = result.expect_err("the bot cannot read the groups, so it refuses to run");
+    assert!(error.to_string().contains("Write permission"), "{error}");
 }

@@ -12,12 +12,14 @@
 //!    admits viewers one by one; the bot checks each viewer and hands it a subscriber token
 //!    (Mumcord spec 07, FR-7.40 to FR-7.50, section 6.6; see [`broadcast`]).
 //!
-//! Only registered users get tokens (unless `registered_only` is off). When the last session of a
-//! certificate leaves or changes certificate, the relay drops that hash. Runs as a module
-//! (`mumbot peer --config bot.toml`, or `mumbot run` with other modules) with a `[peer]` section.
+//! Only registered users get tokens, or the members of the configured `allowed_groups` when they
+//! are set (issue #31). When the last session of a certificate leaves or changes certificate, the
+//! relay drops that hash. Runs as a module (`mumbot peer --config bot.toml`, or `mumbot run` with
+//! other modules) with a `[peer]` section.
 
 pub mod broadcast;
 pub mod config;
+pub mod groups;
 pub mod relay;
 pub mod wire;
 
@@ -25,7 +27,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::Hash;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use mumcord_protocol::Event;
 use tokio::sync::broadcast as events;
 use tokio::time::Instant;
@@ -75,11 +77,18 @@ pub struct Users {
     pub channels: HashMap<u32, u32>,
 }
 
-/// The narrow view of the bot the module needs: who is online, and sending plugin data.
+/// The narrow view of the bot the module needs: who is online, sending plugin data, and reading
+/// the server's ACL groups.
 pub trait Link {
     /// `None` while the bot is not connected.
     fn users(&self) -> impl Future<Output = Option<Users>> + Send;
     fn send(&self, receivers: &[u32], data: Vec<u8>) -> impl Future<Output = Result<()>> + Send;
+    /// The groups of `channel`, from the server's answer to an ACL query. Standard servers answer
+    /// only for users with the Write permission there, which `allowed_groups` needs.
+    fn acl(
+        &self,
+        channel: &str,
+    ) -> impl Future<Output = Result<groups::Members, groups::QueryError>> + Send;
 }
 
 /// Who may get tokens and how many, from `[peer]`.
@@ -89,6 +98,10 @@ pub struct Rules {
     pub registered_only: bool,
     pub cert_requests_per_minute: usize,
     pub max_pairs_per_cert: usize,
+    /// Members of these groups get tokens instead of every registered user (issue #31).
+    pub allowed_groups: Vec<String>,
+    /// Channel whose ACL defines them.
+    pub group_channel: String,
 }
 
 impl From<&PeerConfig> for Rules {
@@ -97,6 +110,12 @@ impl From<&PeerConfig> for Rules {
             registered_only: config.registered_only,
             cert_requests_per_minute: config.cert_requests_per_minute,
             max_pairs_per_cert: config.max_pairs_per_cert,
+            allowed_groups: config
+                .allowed_groups
+                .iter()
+                .map(|name| name.trim().to_owned())
+                .collect(),
+            group_channel: config.group_channel.clone(),
         }
     }
 }
@@ -107,6 +126,8 @@ impl Default for Rules {
             registered_only: true,
             cert_requests_per_minute: config::CERT_REQUESTS_PER_MINUTE,
             max_pairs_per_cert: config::MAX_PAIRS_PER_CERT,
+            allowed_groups: Vec::new(),
+            group_channel: String::from(config::DEFAULT_GROUP_CHANNEL),
         }
     }
 }
@@ -164,6 +185,10 @@ pub struct Peer<R, L> {
     screen: HashSet<u32>,
     broadcasts: Broadcasts,
     bcast_limiter: RequestLimiter<u32>,
+    /// Members of `rules.allowed_groups`, as the server listed them for the last query.
+    groups: groups::Members,
+    /// When the groups were last read, because the server never reports a membership change.
+    read_at: Option<Instant>,
 }
 
 impl<R: RelayApi, L: Link> Peer<R, L> {
@@ -183,6 +208,8 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
             screen: HashSet::new(),
             broadcasts: Broadcasts::default(),
             bcast_limiter: RequestLimiter::new(BROADCAST_REQUESTS_PER_MINUTE),
+            groups: groups::Members::new(),
+            read_at: None,
         }
     }
 
@@ -242,8 +269,97 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
                 self.pairs.clear();
                 self.screen.clear();
                 self.broadcasts.clear();
+                // Group membership belongs to the connection too: the bot reads it again.
+                self.groups.clear();
+                self.read_at = None;
             }
             _ => {}
+        }
+    }
+
+    /// Checks at start that the bot may read the group channel and that every configured group
+    /// exists there. The bot must refuse to run rather than fail open (issue #31).
+    pub async fn check_access(&mut self) -> Result<()> {
+        if self.rules.allowed_groups.is_empty() {
+            return Ok(());
+        }
+        self.read_groups(Instant::now(), true).await?;
+        for name in &self.rules.allowed_groups {
+            if !self.groups.contains_key(name) {
+                bail!(
+                    "peer: group {name:?} is not defined in channel {:?}; the bot cannot check its \
+                     members",
+                    self.rules.group_channel
+                );
+            }
+        }
+        tracing::info!(
+            channel = %self.rules.group_channel,
+            groups = ?self.rules.allowed_groups,
+            "peer: relay tokens restricted to the members of these groups"
+        );
+        Ok(())
+    }
+
+    /// Reads the configured groups, unless the last answer is still fresh (issue #31).
+    async fn read_groups(&mut self, now: Instant, force: bool) -> Result<(), groups::QueryError> {
+        if self.rules.allowed_groups.is_empty() {
+            return Ok(());
+        }
+        if !force
+            && self
+                .read_at
+                .is_some_and(|seen| now - seen < groups::MIN_READ_INTERVAL)
+        {
+            return Ok(());
+        }
+        match self.link.acl(&self.rules.group_channel).await {
+            Ok(read) => self.groups = read,
+            Err(error) => {
+                // A failed read must not keep the members of the previous one, because that would
+                // let people use the relay after the server took their access or the bot's
+                // permission away.
+                self.groups.clear();
+                tracing::warn!(%error, "peer: group members not read, tokens refused");
+                return Err(error);
+            }
+        }
+        self.read_at = Some(now);
+        Ok(())
+    }
+
+    /// Reads the groups again and ends at the relay everything a lost member had there — its open
+    /// pair and its broadcast memberships — because the server never reports a change (issue #31).
+    pub async fn check_groups(&mut self) {
+        if self.rules.allowed_groups.is_empty() {
+            return;
+        }
+        let Some(users) = self.link.users().await else {
+            return;
+        };
+        if self.read_groups(Instant::now(), true).await.is_err() {
+            return;
+        }
+        let known: Vec<(u32, String)> = self
+            .clients
+            .iter()
+            .filter_map(|(session, hash)| Some((*session, hash.clone()?)))
+            .collect();
+        for (session, hash) in known {
+            if self.allowed(&users, session) {
+                continue;
+            }
+            let pair = self.pairs.iter().any(|(a, b)| a == &hash || b == &hash);
+            let broadcast = self.broadcasts.left(session);
+            if !pair && broadcast.is_empty() {
+                continue;
+            }
+            tracing::info!("peer: a user lost group access, its relay sessions ended");
+            if pair {
+                self.pairs.retain(|(a, b)| a != &hash && b != &hash);
+                self.remove_peer(&hash).await;
+            }
+            self.clean_up(broadcast).await;
         }
     }
 
@@ -613,6 +729,12 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
         if !self.cert_limiter.allow(own_cert.clone(), now) {
             return Err(TokenError::RateLimited);
         }
+        // Groups are read again per request, so a stale answer never grants a token (issue #31).
+        if !self.rules.allowed_groups.is_empty() {
+            self.read_groups(now, false)
+                .await
+                .map_err(|_| TokenError::Denied)?;
+        }
         // Guests: the client has no finer reason (the reasons are a closed list in Mumcord), so
         // the bot's log names it.
         if !self.allowed(&users, sender) {
@@ -675,9 +797,19 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
         }
     }
 
-    /// Registered, unless `registered_only` is off.
+    /// A member of one of the configured groups, or registered when no groups are configured.
     fn allowed(&self, users: &Users, session: u32) -> bool {
-        !self.rules.registered_only || users.user_ids.contains_key(&session)
+        if self.rules.allowed_groups.is_empty() {
+            return !self.rules.registered_only || users.user_ids.contains_key(&session);
+        }
+        let Some(id) = users.user_ids.get(&session) else {
+            return false;
+        };
+        self.rules.allowed_groups.iter().any(|name| {
+            self.groups
+                .get(name)
+                .is_some_and(|members| members.contains(id))
+        })
     }
 
     fn open_pairs(&self, hash: &str) -> usize {
@@ -749,8 +881,13 @@ pub async fn run<R: RelayApi, L: Link>(
         );
     }
     let mut peer = Peer::new(relay, link, rules);
+    // Without the Write permission on the group channel the bot cannot know its members, so it
+    // refuses to run instead of handing tokens to everyone (issue #31).
+    peer.check_access().await?;
     let mut status = tokio::time::interval(STATUS_INTERVAL);
     status.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut group_check = tokio::time::interval(groups::READ_INTERVAL);
+    group_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
             event = events.recv() => match event {
@@ -763,6 +900,7 @@ pub async fn run<R: RelayApi, L: Link>(
                 Err(events::error::RecvError::Closed) => return Ok(()),
             },
             _ = status.tick() => peer.check_status().await,
+            _ = group_check.tick() => peer.check_groups().await,
         }
     }
 }

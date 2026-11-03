@@ -120,6 +120,7 @@ impl MessageCheck {
 }
 
 /// Finds a channel by name (must be unique) or by path from the root (`Root/Raid`, `/Raid`).
+/// `Root` alone is the root channel, whatever the server calls it.
 pub fn resolve_channel(state: &ServerState, name: &str) -> Result<u32> {
     if name.contains('/') {
         let mut parts = name.split('/').filter(|p| !p.is_empty()).peekable();
@@ -139,6 +140,9 @@ pub fn resolve_channel(state: &ServerState, name: &str) -> Result<u32> {
                 .id;
         }
         return Ok(id);
+    }
+    if name == "Root" {
+        return Ok(0);
     }
     let mut found = state.channels.values().filter(|c| c.name == name);
     match (found.next(), found.next()) {
@@ -204,6 +208,11 @@ mod tests {
         assert_eq!(resolve_channel(&s, "Root/Raid").ok(), Some(2));
         assert_eq!(resolve_channel(&s, "/Lobby/Raid").ok(), Some(3));
         assert_eq!(resolve_channel(&s, "Test Server/Lobby").ok(), Some(1));
+        assert_eq!(
+            resolve_channel(&s, "Root").ok(),
+            Some(0),
+            "the root channel"
+        );
         assert!(resolve_channel(&s, "Nope").is_err());
     }
 
