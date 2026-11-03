@@ -275,6 +275,15 @@ impl HistoryLink for Arc<BotApi> {
             .send_plugin_data(receivers, history::wire::DATA_ID, data)?;
         Ok(())
     }
+
+    async fn query_permissions(&self, channel: u32) -> Result<()> {
+        let guard = self.bot.lock().await;
+        let bot = guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("bot is not connected"))?;
+        bot.handle().query_permissions(channel)?;
+        Ok(())
+    }
 }
 
 /// The plugins module's view of the bot (`src/plugins/`).
