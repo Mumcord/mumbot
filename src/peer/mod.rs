@@ -46,7 +46,7 @@ pub use relay::{
 
 use broadcast::{Broadcasts, Cleanup};
 use wire::{
-    BroadcastErrorReason as BcastError, BroadcastId, PeerMessage, RelayAnnouncement,
+    BroadcastErrorReason as BcastError, BroadcastId, BroadcastKind, PeerMessage, RelayAnnouncement,
     RelayState as State, RelayToken, RelayUse, RequestId, TokenErrorReason as TokenError,
 };
 
@@ -680,6 +680,7 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
             return Err(BcastError::Denied);
         }
         let viewer_cert = self.member_cert(&users, viewer, kind)?;
+        let broadcast_kind = broadcast_kind(kind).ok_or(BcastError::Denied)?;
         // Two sessions of one identity are one user; the relay refuses it anyway.
         if viewer_cert == publisher_cert {
             return Err(BcastError::Denied);
@@ -718,6 +719,7 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
             token,
             ttl: ttl(granted.expires_in),
             sharer: sender,
+            kind: broadcast_kind,
         };
         Ok((viewer, message))
     }
@@ -960,6 +962,17 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
 }
 
 /// A token's validity in seconds as it fits the wire.
+/// The kind a viewer needs to hand a token to the right one of a sharer's broadcasts. Only
+/// broadcast uses can be created, so images and files have none.
+fn broadcast_kind(kind: RelayUse) -> Option<BroadcastKind> {
+    match kind {
+        RelayUse::ScreenShare => Some(BroadcastKind::ScreenShare),
+        RelayUse::PluginData => Some(BroadcastKind::PluginData),
+        RelayUse::Camera => Some(BroadcastKind::Camera),
+        RelayUse::Images | RelayUse::Files => None,
+    }
+}
+
 fn ttl(expires_in: u64) -> u16 {
     u16::try_from(expires_in).unwrap_or(u16::MAX)
 }
