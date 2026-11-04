@@ -481,7 +481,9 @@ async fn a_camera_runs_beside_a_screen_share_and_ends_on_a_channel_change() {
 
     // Bob watches the camera.
     admit(&alice, bot, &camera_text, bob.session());
-    assert_eq!(bob.next(bot).await["t"], "bcast-tok");
+    let camera_token = bob.next(bot).await;
+    assert_eq!(camera_token["t"], "bcast-tok");
+    assert_eq!(camera_token["k"], "cam");
 
     // Alice changes channel: her camera ends at the relay, her screen share keeps running.
     alice.bot.join(&room).await.expect("alice moves away");
@@ -544,4 +546,71 @@ async fn a_relay_without_cameras_answers_use_not_allowed() {
     );
     running.abort();
     alice.bot.disconnect().await.expect("alice leaves");
+}
+
+fn plg_req(sharer: &Client, bot: u32) {
+    let message = format!(r#"{{"v":1,"t":"bcast-req","rid":"{RID}","max":25,"k":"plg"}}"#);
+    sharer.send(bot, "mumcord.peer", message);
+}
+
+#[tokio::test]
+#[ignore = "needs the mumpeer testenv and MUMBOT_LIVE=1 MUMBOT_PEER_RELAY=1"]
+async fn a_viewer_gets_the_tokens_of_a_screen_share_and_plugin_data_tagged_by_kind() {
+    if !live() {
+        return;
+    }
+    let status = relay().status().await.expect("mumpeer testenv is up");
+    let plugin_data = status.broadcast.is_some()
+        && status
+            .uses
+            .is_none_or(|uses| uses.iter().any(|u| u == "plugin_data"));
+    if !plugin_data {
+        eprintln!("skipped: the relay runs without plugin data broadcasts");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let bot_name = unique("peerbot");
+    let mut alice = Client::connect(dir.path(), "alice").await;
+    let mut bob = Client::connect(dir.path(), "bob").await;
+    let running = tokio::spawn(modules::run(
+        peer_config(dir.path(), &bot_name),
+        VoiceSettings::default(),
+    ));
+    let bot = alice
+        .bot
+        .wait_user(&bot_name, &UserCheck::default())
+        .await
+        .expect("the peer bot logs in")
+        .session;
+    for client in [&mut alice, &mut bob] {
+        client
+            .greet_with(bot, r#""p2p","screen-share","plugins""#)
+            .await;
+    }
+
+    // One sender runs both broadcasts at the same time.
+    bcast_req(&alice, bot, 25);
+    let screen = alice.next(bot).await;
+    assert_eq!(screen["t"], "bcast", "{screen}");
+    plg_req(&alice, bot);
+    let plugin = alice.next(bot).await;
+    assert_eq!(plugin["t"], "bcast", "{plugin}");
+    assert_ne!(screen["id"], plugin["id"]);
+
+    for (broadcast, kind) in [(&screen, "scr"), (&plugin, "plg")] {
+        let id = broadcast["id"].as_str().expect("id");
+        admit(&alice, bot, id, bob.session());
+        let token = bob.next(bot).await;
+        assert_eq!(token["t"], "bcast-tok", "{token}");
+        assert_eq!(token["id"], id);
+        assert_eq!(token["k"], kind, "{token}");
+    }
+
+    let certs = [alice.cert(), bob.cert()];
+    running.abort();
+    alice.bot.disconnect().await.expect("alice leaves");
+    bob.bot.disconnect().await.expect("bob leaves");
+    for cert in certs {
+        relay().remove_peer(&cert).await.expect("clean up");
+    }
 }

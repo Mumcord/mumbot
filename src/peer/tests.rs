@@ -877,9 +877,46 @@ async fn an_admitted_viewer_gets_its_token_and_nobody_else_does() {
         vec![(
             vec![BOB],
             serde_json::json!({"v":1,"t":"bcast-tok","id":BCAST_ID,
-                "tok":"V".repeat(43),"ttl":60,"sharer":ALICE})
+                "tok":"V".repeat(43),"ttl":60,"sharer":ALICE,"k":"scr"})
         )]
     );
+}
+
+fn admit_id(sender: u32, id: &str, viewer: u32) -> Event {
+    peer_message(
+        sender,
+        &format!(r#"{{"v":1,"t":"bcast-admit","rid":"{RID}","id":"{id}","viewer":{viewer}}}"#),
+    )
+}
+
+#[tokio::test]
+async fn a_viewer_token_carries_the_kind_of_its_broadcast() {
+    let mut s = setup();
+    s.peer.check_status().await;
+    let now = Instant::now();
+    let all = br#"{"app":"mumcord","v":1,"features":["p2p","screen-share","plugins","camera"]}"#;
+    for session in [ALICE, BOB] {
+        s.peer
+            .on_event(plugin(session, "mumcord.hello", all), now)
+            .await;
+    }
+    s.peer.on_event(bcast_req(ALICE), now).await;
+    s.peer.on_event(plg_req(ALICE), now).await;
+    s.peer.on_event(cam_req(ALICE), now).await;
+    s.link.take_sent();
+    for (id, kind) in [
+        ("00000000000000b1", "scr"),
+        ("00000000000000b2", "plg"),
+        ("00000000000000b3", "cam"),
+    ] {
+        s.peer.on_event(admit_id(ALICE, id, BOB), now).await;
+        let sent = s.link.take_sent();
+        assert_eq!(sent.len(), 1, "{kind}: {sent:?}");
+        assert_eq!(sent[0].0, vec![BOB]);
+        assert_eq!(sent[0].1["t"], "bcast-tok");
+        assert_eq!(sent[0].1["id"], id);
+        assert_eq!(sent[0].1["k"], kind);
+    }
 }
 
 #[tokio::test]

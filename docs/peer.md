@@ -165,8 +165,12 @@ official Mumble clients ignore. Each message is compact JSON of at most 1000 byt
    token to the viewer only:
 
    ```json
-   {"v":1,"t":"bcast-tok","id":"<16 hex>","tok":"<43 base64url>","ttl":120,"sharer":<sharer session>}
+   {"v":1,"t":"bcast-tok","id":"<16 hex>","tok":"<43 base64url>","ttl":120,"sharer":<sharer session>,"k":"scr"}
    ```
+
+   `k` is the kind of the broadcast (`scr`, `plg` or `cam`, the same values as in `bcast-req`).
+   A sharer can run one broadcast of each kind at once, so the viewer needs it to hand the token
+   to the right one.
 
    The sharer removes a viewer with `{"v":1,"t":"bcast-kick","id":"<16 hex>","viewer":<session>}`;
    the bot removes that viewer's certificate at the relay, which tells the sharer the viewer is
