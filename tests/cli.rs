@@ -8,6 +8,7 @@ use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
+use mumbot::protocol::Event;
 use mumbot::samples::PNG;
 use mumbot::{Bot, BotConfig, MessageCheck, UserCheck, env};
 use tokio::io::AsyncWriteExt;
@@ -315,4 +316,62 @@ async fn hold_keeps_the_bot_online_and_every_message_is_delivered() {
         .await
         .unwrap_or_else(|e| panic!("burst message {n} lost: {e:#}"));
     }
+}
+
+/// The scripted test bot shows as a regular user in Mumcord (Mumcord issue #458): unlike the
+/// modules, it never answers a Mumcord hello with a `bot` object.
+#[tokio::test]
+#[ignore = "needs testenv and MUMBOT_LIVE=1"]
+async fn the_test_bot_never_says_it_is_a_bot() {
+    if std::env::var("MUMBOT_LIVE").ok().as_deref() != Some("1") {
+        return;
+    }
+    let data = tempfile::tempdir().expect("tempdir");
+    let data = data.path();
+    let obs = Bot::connect(BotConfig {
+        data_dir: Some(data.to_owned()),
+        timeout: Duration::from_secs(20),
+        ..BotConfig::new(&unique("obs"), env::test_port())
+    })
+    .await
+    .expect("observer");
+    let t = unique("cli-t");
+    let mut held = cli(data, &["--name", &t, "--hold", "4", "connect"])
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("spawn test bot");
+    obs.wait_user(&t, &UserCheck::default())
+        .await
+        .expect("test bot online");
+    let session = obs
+        .state()
+        .users
+        .values()
+        .find(|u| u.name == t)
+        .map(|u| u.session)
+        .expect("test bot session");
+    let mut events = obs.subscribe();
+    obs.handle()
+        .send_plugin_data(
+            &[session],
+            "mumcord.hello",
+            br#"{"app":"mumcord","v":1,"features":["p2p"]}"#.to_vec(),
+        )
+        .expect("hello");
+
+    let bot_hello = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            if let Ok(Event::PluginData(data)) = events.recv().await
+                && data.sender == Some(session)
+                && data.data_id == "mumcord.hello"
+                && serde_json::from_slice::<serde_json::Value>(&data.data)
+                    .is_ok_and(|hello| hello.get("bot").is_some())
+            {
+                return;
+            }
+        }
+    })
+    .await;
+    assert!(bot_hello.is_err(), "the test bot sent a bot hello");
+    assert!(held.wait().await.expect("test bot exit").success());
 }

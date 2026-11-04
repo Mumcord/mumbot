@@ -66,11 +66,20 @@ as one:
   joins later. The bot answers each hello with its own, to that client only:
 
   ```json
-  {"app":"mumcord","v":1,"features":[],"bot":{"name":"mumbot","version":"0.4.1","modules":["webhook","music"]}}
+  {"app":"mumcord","v":1,"features":[],"bot":{"name":"mumbot","product":"Mumbot","version":"0.4.1","modules":["webhook","music"],"voice":true}}
   ```
 
-  `version` is the bot's version, `modules` the modules it runs, in the order of the list above.
-  Clients that do not know the `bot` object ignore it.
+  The `bot` object marks the user as a bot. `product` and `version` are what Mumcord shows as the
+  bot's client ("Mumbot 0.4.1"), `modules` the modules it runs, in the order of the list above.
+  `voice` is `true` when the bot speaks in its channel, that is when the `music` module runs; one
+  bot process is one Mumble user, so a relay bot that also plays music is a voice bot. Mumcord
+  lists every bot under "Bots on this server" and shows only voice bots in the channel tree as
+  well. Clients that do not know the `bot` object or one of its fields ignore it.
+- The bot also reports "Mumbot <version>" as its client release to the server, so every Mumble
+  client, not only Mumcord, shows it as Mumbot instead of Mumcord.
+- The scripted test bot of the tester build (`say`, `expect`, `script`, …) never sends a `bot`
+  object and keeps the release "Mumcord <version>": Mumcord shows it like a person, so tests see
+  what a real user sees. The modules send the `bot` object in both builds.
 - At most once every 10 seconds per client. Answers to several clients go out together in one
   message per second, which leaves the server's plugin data limit (4 per second) to the other
   modules.

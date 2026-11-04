@@ -3,8 +3,11 @@
 //!
 //! Mumcord clients greet everyone on connect and everyone who joins later with plugin data
 //! `mumcord.hello`. The bot answers each such hello with its own, to that client only:
-//! `{"app":"mumcord","v":1,"features":[],"bot":{"name":"mumbot","version":…,"modules":[…]}}`.
-//! The `bot` object is additive; clients that do not know it ignore unknown fields. The bot never
+//! `{"app":"mumcord","v":1,"features":[],"bot":{"name":"mumbot","product":"Mumbot","version":…,
+//! "modules":[…],"voice":…}}` (Mumcord issues #458 and #459). `product` and `version` give the
+//! client line ("Mumbot 0.4.1"); `voice` is true when the bot speaks in its channel (the music
+//! module), so Mumcord shows it there and not only among the server's bots. One process is one
+//! Mumble user, so a relay bot that also plays music is a voice bot. The `bot` object is additive; clients that do not know it ignore unknown fields. The bot never
 //! greets first, so two bots never answer each other. The modules are fixed for as long as the
 //! process runs; a module change needs a restart, after which the clients greet the bot again
 //! (it is a new joiner for them) and get the new hello that way. At most one hello per session
@@ -25,6 +28,8 @@ use crate::peer::wire::{HELLO_ID, is_hello};
 
 /// The bot's name in the hello.
 pub const BOT_NAME: &str = "mumbot";
+/// The product name clients show with the version, e.g. "Mumbot 0.4.1".
+pub const PRODUCT: &str = "Mumbot";
 /// Least time between two hellos to one session.
 pub const MIN_INTERVAL: Duration = Duration::from_secs(10);
 /// How often waiting hellos go out, together in one message.
@@ -41,8 +46,16 @@ struct Wire<'a> {
 #[derive(Serialize)]
 struct BotInfo<'a> {
     name: &'a str,
+    product: &'a str,
     version: &'a str,
     modules: Vec<Module>,
+    voice: bool,
+}
+
+/// The release name the bot sends to the server, which every Mumble client shows as its client:
+/// "Mumbot <version>" instead of the protocol crate's default "Mumcord <version>".
+pub fn client_release() -> String {
+    format!("{PRODUCT} {}", env!("CARGO_PKG_VERSION"))
 }
 
 /// The hello of a bot running `modules`: sorted, without duplicates, as compact JSON.
@@ -54,7 +67,9 @@ pub fn encode(modules: &[Module]) -> Vec<u8> {
         features: [],
         bot: BotInfo {
             name: BOT_NAME,
+            product: PRODUCT,
             version: env!("CARGO_PKG_VERSION"),
+            voice: modules.contains(&Module::Music),
             modules: modules.into_iter().collect(),
         },
     };
@@ -244,23 +259,55 @@ mod tests {
         (Arc::clone(&link), Greeter::new(link, b"hi".to_vec()))
     }
 
+    fn decode(modules: &[Module]) -> serde_json::Value {
+        serde_json::from_slice(&encode(modules)).expect("json")
+    }
+
     #[test]
-    fn the_hello_names_the_bot_its_version_and_its_modules() {
-        let json: serde_json::Value =
-            serde_json::from_slice(&encode(&[Module::Music, Module::Peer, Module::Music]))
-                .expect("json");
+    fn a_relay_bot_says_it_is_a_bot_without_voice() {
         assert_eq!(
-            json,
+            decode(&[Module::Webhook, Module::Peer, Module::History]),
             serde_json::json!({
                 "app": "mumcord",
                 "v": 1,
                 "features": [],
                 "bot": {
                     "name": "mumbot",
+                    "product": "Mumbot",
                     "version": env!("CARGO_PKG_VERSION"),
-                    "modules": ["peer", "music"],
+                    "modules": ["webhook", "peer", "history"],
+                    "voice": false,
                 },
             })
+        );
+    }
+
+    #[test]
+    fn a_music_bot_says_it_uses_voice() {
+        assert_eq!(
+            decode(&[Module::Music, Module::Music])["bot"],
+            serde_json::json!({
+                "name": "mumbot",
+                "product": "Mumbot",
+                "version": env!("CARGO_PKG_VERSION"),
+                "modules": ["music"],
+                "voice": true,
+            })
+        );
+    }
+
+    #[test]
+    fn a_relay_bot_with_music_is_a_voice_bot() {
+        let bot = &decode(&[Module::Music, Module::Peer])["bot"];
+        assert_eq!(bot["modules"], serde_json::json!(["peer", "music"]));
+        assert_eq!(bot["voice"], true, "one process is one Mumble user");
+    }
+
+    #[test]
+    fn the_client_release_names_mumbot() {
+        assert_eq!(
+            client_release(),
+            format!("Mumbot {}", env!("CARGO_PKG_VERSION"))
         );
     }
 
@@ -273,6 +320,7 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&message).expect("json");
         let bot = &json["bot"];
         assert!(BOT_NAME.len() <= 32);
+        assert!(PRODUCT.len() <= 32);
         let modules = bot["modules"].as_array().expect("modules");
         assert_eq!(modules.len(), ALL.len());
         assert!(modules.len() <= 16);
