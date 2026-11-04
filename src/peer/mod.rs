@@ -10,7 +10,10 @@
 //! 2. A client that asks for a token for one peer gets one from the relay's API, sent to both.
 //! 3. A screen sharer asks for a broadcast (one upload, copied by the relay to every viewer) and
 //!    admits viewers one by one; the bot checks each viewer and hands it a subscriber token
-//!    (Mumcord spec 07, FR-7.40 to FR-7.50, section 6.6; see [`broadcast`]).
+//!    (Mumcord spec 07, FR-7.40 to FR-7.50, section 6.6; see [`broadcast`]). Plugin data uses the
+//!    same broadcasts with kind `plg` (Mumcord spec 09, FR-9.88): at most
+//!    [`PLUGIN_DATA_SENDERS_PER_CHANNEL`] senders per channel, and the bot never sees which plugin
+//!    the data belongs to.
 //!
 //! Only registered users get tokens, or the members of the configured `allowed_groups` when they
 //! are set (issue #31). When the last session of a certificate leaves or changes certificate, the
@@ -34,8 +37,8 @@ use tokio::time::Instant;
 
 pub use config::{PeerConfig, Secret};
 pub use relay::{
-    BroadcastError, BroadcastStatus, HttpRelay, NewBroadcast, Pair, PairError, RelayApi, Status,
-    ViewerToken,
+    BroadcastError, BroadcastStatus, HttpRelay, NewBroadcast, Pair, PairError, PluginDataStatus,
+    RelayApi, Status, ViewerToken,
 };
 
 use broadcast::{Broadcasts, Cleanup};
@@ -63,6 +66,8 @@ pub const REQUESTS_PER_MINUTE: usize = 6;
 /// `bcast-req` and `bcast-admit` per session and minute: a full broadcast of 25 viewers that
 /// all join at once must fit, with room for viewers who press Watch again.
 pub const BROADCAST_REQUESTS_PER_MINUTE: usize = 60;
+/// Most sessions in one channel that send plugin data broadcasts at the same time (FR-9.88).
+pub const PLUGIN_DATA_SENDERS_PER_CHANNEL: usize = 8;
 
 /// What the module sees of the Mumble connection.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -183,6 +188,8 @@ pub struct Peer<R, L> {
     pairs: HashSet<(String, String)>,
     /// Sessions of `clients` whose hello also listed `screen-share`.
     screen: HashSet<u32>,
+    /// Sessions of `clients` whose hello also listed `plugins`.
+    plugins: HashSet<u32>,
     broadcasts: Broadcasts,
     bcast_limiter: RequestLimiter<u32>,
     /// Members of `rules.allowed_groups`, as the server listed them for the last query.
@@ -206,6 +213,7 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
             rules,
             pairs: HashSet::new(),
             screen: HashSet::new(),
+            plugins: HashSet::new(),
             broadcasts: Broadcasts::default(),
             bcast_limiter: RequestLimiter::new(BROADCAST_REQUESTS_PER_MINUTE),
             groups: groups::Members::new(),
@@ -227,7 +235,8 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
                 let Some(sender) = data.sender else { return };
                 if data.data_id == wire::HELLO_ID && wire::is_p2p_hello(&data.data) {
                     let screen = wire::hello_lists(&data.data, wire::SCREEN_SHARE_FEATURE);
-                    self.on_hello(sender, screen).await;
+                    let plugins = wire::hello_lists(&data.data, wire::PLUGINS_FEATURE);
+                    self.on_hello(sender, screen, plugins).await;
                 } else if data.data_id == wire::DATA_ID
                     && let Ok(message) = PeerMessage::decode(&data.data)
                 {
@@ -255,6 +264,7 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
             }
             Event::UserRemoved { user, .. } => {
                 self.screen.remove(&user.session);
+                self.plugins.remove(&user.session);
                 let cleanup = self.broadcasts.left(user.session);
                 self.clean_up(cleanup).await;
                 if let Some(Some(hash)) = self.clients.remove(&user.session) {
@@ -268,6 +278,7 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
                 self.clients.clear();
                 self.pairs.clear();
                 self.screen.clear();
+                self.plugins.clear();
                 self.broadcasts.clear();
                 // Group membership belongs to the connection too: the bot reads it again.
                 self.groups.clear();
@@ -421,6 +432,7 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
             seq: self.seq,
             uses: status.announced_uses(),
             broadcast: status.broadcast.map(|b| b.max_viewers),
+            plugin_data_kbps: status.plugin_data_kbps(),
         }))
     }
 
@@ -430,12 +442,15 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
         }
     }
 
-    async fn on_hello(&mut self, sender: u32, screen: bool) {
-        // The feature list may change with a later hello (screen sharing turned on or off).
-        if screen {
-            self.screen.insert(sender);
-        } else {
-            self.screen.remove(&sender);
+    async fn on_hello(&mut self, sender: u32, screen: bool, plugins: bool) {
+        // The feature list may change with a later hello (screen sharing or plugins turned on or
+        // off).
+        for (set, listed) in [(&mut self.screen, screen), (&mut self.plugins, plugins)] {
+            if listed {
+                set.insert(sender);
+            } else {
+                set.remove(&sender);
+            }
         }
         // Only the first hello per session is answered, so a client repeating its hello cannot
         // make the bot run into the server's plugin data limit.
@@ -480,8 +495,10 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
                 };
                 self.on_request(sender, request, now).await;
             }
-            PeerMessage::BroadcastRequest { rid, max } => {
-                let result = self.create_broadcast(sender, rid, max, now).await;
+            PeerMessage::BroadcastRequest { rid, max, kind } => {
+                // A request without a kind comes from a client older than plugin data.
+                let kind = kind.unwrap_or(RelayUse::ScreenShare);
+                let result = self.create_broadcast(sender, rid, max, kind, now).await;
                 self.answer(sender, rid, result).await;
             }
             PeerMessage::BroadcastAdmit { rid, id, viewer } => {
@@ -511,23 +528,37 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
         }
     }
 
-    /// `bcast-req`: a new broadcast published by `sender` (FR-7.40).
+    /// `bcast-req`: a new broadcast of `kind` published by `sender` (FR-7.40, FR-9.88).
     async fn create_broadcast(
         &mut self,
         sender: u32,
         rid: RequestId,
         max: u16,
+        kind: RelayUse,
         now: Instant,
     ) -> Result<(u32, PeerMessage), BcastError> {
         if !self.bcast_limiter.allow(sender, now) {
             return Err(BcastError::RateLimited);
         }
         let users = self.link.users().await.ok_or(BcastError::RelayDown)?;
-        let cert = self.member_cert(&users, sender)?;
+        let cert = self.member_cert(&users, sender, kind)?;
+        if kind == RelayUse::PluginData {
+            let channel = *users.channels.get(&sender).ok_or(BcastError::Denied)?;
+            // The sender's own running broadcast is replaced below, so it does not count. The
+            // closed list of reasons has nothing closer than "the relay runs all it allows".
+            let senders = self
+                .broadcasts
+                .publishers_in(kind, channel, sender, |session| {
+                    users.channels.get(&session).copied()
+                });
+            if senders >= PLUGIN_DATA_SENDERS_PER_CHANNEL {
+                return Err(BcastError::RelayFull);
+            }
+        }
         if self.state != State::Up {
             return Err(BcastError::RelayDown);
         }
-        let created = match self.relay.create_broadcast(&cert, max).await {
+        let created = match self.relay.create_broadcast(&cert, max, kind).await {
             Ok(created) => created,
             Err(BroadcastError::RelayFull) => return Err(BcastError::RelayFull),
             Err(BroadcastError::UseNotAllowed) => return Err(BcastError::UseNotAllowed),
@@ -542,7 +573,7 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
             self.delete_broadcast(created.id).await;
             return Err(BcastError::RelayDown);
         };
-        if let Some(old) = self.broadcasts.insert(created.id, sender, cert) {
+        if let Some(old) = self.broadcasts.insert(created.id, sender, cert, kind) {
             self.delete_broadcast(old).await;
         }
         let message = PeerMessage::Broadcast {
@@ -566,14 +597,16 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
             return Err(BcastError::RateLimited);
         }
         let users = self.link.users().await.ok_or(BcastError::RelayDown)?;
-        let publisher_cert = match self.broadcasts.get(id) {
-            Some(broadcast) if broadcast.publisher == sender => broadcast.publisher_cert.clone(),
+        let (publisher_cert, kind) = match self.broadcasts.get(id) {
+            Some(broadcast) if broadcast.publisher == sender => {
+                (broadcast.publisher_cert.clone(), broadcast.kind)
+            }
             _ => return Err(BcastError::Denied),
         };
-        if self.member_cert(&users, sender)? != publisher_cert || viewer == users.own {
+        if self.member_cert(&users, sender, kind)? != publisher_cert || viewer == users.own {
             return Err(BcastError::Denied);
         }
-        let viewer_cert = self.member_cert(&users, viewer)?;
+        let viewer_cert = self.member_cert(&users, viewer, kind)?;
         // Two sessions of one identity are one user; the relay refuses it anyway.
         if viewer_cert == publisher_cert {
             return Err(BcastError::Denied);
@@ -631,13 +664,23 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
         }
     }
 
-    /// The certificate of a session that may take part in a broadcast: online with a
-    /// certificate, hello with `p2p` and `screen-share`, and allowed to use the relay.
-    fn member_cert(&self, users: &Users, session: u32) -> Result<String, BcastError> {
+    /// The certificate of a session that may take part in a broadcast of `kind`: online with a
+    /// certificate, hello with `p2p` and `screen-share` (screen sharing) or `plugins` (plugin
+    /// data), and allowed to use the relay.
+    fn member_cert(
+        &self,
+        users: &Users,
+        session: u32,
+        kind: RelayUse,
+    ) -> Result<String, BcastError> {
+        let feature = match kind {
+            RelayUse::PluginData => &self.plugins,
+            _ => &self.screen,
+        };
         match users.certs.get(&session) {
             Some(Some(cert))
                 if self.clients.contains_key(&session)
-                    && self.screen.contains(&session)
+                    && feature.contains(&session)
                     && self.allowed(users, session) =>
             {
                 Ok(cert.clone())

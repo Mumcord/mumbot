@@ -1148,7 +1148,7 @@ dependencies = [
 [[package]]
 name = "mumcord-p2p"
 version = "0.6.2"
-source = "git+https://github.com/Mumcord/mumcord?branch=main#39f442e955d20fc6d9fc408e40e4f245bc7f5650"
+source = "git+https://github.com/Mumcord/mumcord?branch=main#bf0d3ad85ad25d5174ea9a29a25eb217f4439e92"
 dependencies = [
  "bytes",
  "crab_nat",
@@ -1193,7 +1193,7 @@ dependencies = [
 [[package]]
 name = "mumcord-protocol"
 version = "0.6.2"
-source = "git+https://github.com/Mumcord/mumcord?branch=main#39f442e955d20fc6d9fc408e40e4f245bc7f5650"
+source = "git+https://github.com/Mumcord/mumcord?branch=main#bf0d3ad85ad25d5174ea9a29a25eb217f4439e92"
 dependencies = [
  "aes",
  "base64",
