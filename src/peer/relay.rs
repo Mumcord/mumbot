@@ -3,12 +3,13 @@
 //!
 //! HTTP/1.1 with JSON and `Authorization: Bearer <secret>`:
 //! - `GET /v1/status` → `{"boot_id","host","udp","tcp","fp",…}`
-//! - `POST /v1/pairs` with `{"a","b","use"}` (two certificate hashes and `images|files|screen_share`)
-//!   → `201 {"tok","expires_in"}`, `403` when the use is disabled, `503` when the relay is
-//!   full, `429` when the bot asks too often
+//! - `POST /v1/pairs` with `{"a","b","use"}` (two certificate hashes and
+//!   `images|files|screen_share|plugin_data`) → `201 {"tok","expires_in"}`, `403` when the use is
+//!   disabled, `503` when the relay is full, `429` when the bot asks too often
 //! - `DELETE /v1/peers/{hash}` → `204`; the relay drops the hash from all pairs and broadcasts
-//! - `POST /v1/broadcasts` with `{"publisher","max_viewers"}` → `201 {"id","tok","expires_in"}`,
-//!   `403` when screen sharing is disabled, `503` when the relay runs all broadcasts it allows
+//! - `POST /v1/broadcasts` with `{"publisher","max_viewers","use"}` (`use` is `screen_share` when
+//!   missing, or `plugin_data`) → `201 {"id","tok","expires_in"}`, `403` when that use is
+//!   disabled, `503` when the relay runs all broadcasts it allows
 //! - `POST /v1/broadcasts/{id}/viewers` with `{"viewer"}` → `201 {"tok","expires_in"}`, `409`
 //!   when the broadcast is full, `404` when it has ended
 //! - `DELETE /v1/broadcasts/{id}/viewers/{hash}` and `DELETE /v1/broadcasts/{id}` → `204`
@@ -50,13 +51,16 @@ pub struct Status {
     pub tcp: u16,
     /// SHA-256 of the relay certificate.
     pub fp: String,
-    /// The uses the relay allows, by its names (`images`, `files`, `screen_share`). `None` for a
-    /// relay that predates the setting: it allows everything.
+    /// The uses the relay allows, by its names (`images`, `files`, `screen_share`,
+    /// `plugin_data`). `None` for a relay that predates the setting: it allows everything.
     #[serde(default)]
     pub uses: Option<Vec<String>>,
     /// Broadcast limits; absent when the relay offers no broadcasts.
     #[serde(default)]
     pub broadcast: Option<BroadcastStatus>,
+    /// Plugin data limits (Mumcord spec 09); absent on a relay without plugin data.
+    #[serde(default)]
+    pub plugin_data: Option<PluginDataStatus>,
 }
 
 /// The relay's broadcast limits from `GET /v1/status`.
@@ -65,16 +69,34 @@ pub struct BroadcastStatus {
     pub max_viewers: u16,
 }
 
+/// The relay's plugin data limits from `GET /v1/status`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct PluginDataStatus {
+    pub max_kbps_per_sender: u32,
+}
+
 /// The relay's name for `relay_use` in `/v1/status` and `POST /v1/pairs`.
 fn api_use_name(relay_use: RelayUse) -> &'static str {
     match relay_use {
         RelayUse::Images => "images",
         RelayUse::Files => "files",
         RelayUse::ScreenShare => "screen_share",
+        RelayUse::PluginData => "plugin_data",
     }
 }
 
-const ALL_USES: [RelayUse; 3] = [RelayUse::Images, RelayUse::Files, RelayUse::ScreenShare];
+/// The `use` of a `POST /v1/broadcasts`: left out for screen sharing, the relay's default, so a
+/// relay older than plugin data still takes the request.
+fn broadcast_use(relay_use: RelayUse) -> Option<&'static str> {
+    (relay_use != RelayUse::ScreenShare).then(|| api_use_name(relay_use))
+}
+
+const ALL_USES: [RelayUse; 4] = [
+    RelayUse::Images,
+    RelayUse::Files,
+    RelayUse::ScreenShare,
+    RelayUse::PluginData,
+];
 
 impl Status {
     /// Checks what goes out to clients, so the bot never announces something they must reject
@@ -92,6 +114,9 @@ impl Status {
         }
         if self.broadcast.is_some_and(|b| b.max_viewers == 0) {
             bail!("relay API status: invalid broadcast max_viewers");
+        }
+        if self.plugin_data.is_some_and(|p| p.max_kbps_per_sender == 0) {
+            bail!("relay API status: invalid plugin_data max_kbps_per_sender");
         }
         // Names this bot does not know are ignored (a newer relay); the list is kept in a fixed
         // order so an unchanged relay never looks changed.
@@ -117,6 +142,18 @@ impl Status {
                 .filter(|u| uses.iter().any(|name| name == api_use_name(*u)))
                 .collect(),
         )
+    }
+
+    /// The per-sender plugin data limit as announced to clients (`pk`): only while the relay
+    /// allows plugin data, so a client never reads a limit for a use it cannot have.
+    pub fn plugin_data_kbps(&self) -> Option<u32> {
+        let allowed = self
+            .uses
+            .as_ref()
+            .is_none_or(|uses| uses.iter().any(|u| u == api_use_name(RelayUse::PluginData)));
+        self.plugin_data
+            .filter(|_| allowed)
+            .map(|p| p.max_kbps_per_sender)
     }
 }
 
@@ -162,7 +199,7 @@ pub enum BroadcastError {
     RelayFull,
     /// `409` on admit: the broadcast has no room for another viewer.
     Full,
-    /// `403` on create: the relay does not allow screen sharing.
+    /// `403` on create: the relay does not allow the broadcast's use.
     UseNotAllowed,
     /// `404` on admit: the broadcast has already ended at the relay.
     Gone,
@@ -181,11 +218,13 @@ pub trait RelayApi {
     ) -> impl Future<Output = Result<Pair, PairError>> + Send;
     /// Drops `hash` from all pairs and broadcasts and closes its sessions.
     fn remove_peer(&self, hash: &str) -> impl Future<Output = Result<()>> + Send;
-    /// Creates a broadcast published by certificate hash `publisher` for up to `max_viewers`.
+    /// Creates a broadcast of `relay_use` (`ScreenShare` or `PluginData`) published by
+    /// certificate hash `publisher` for up to `max_viewers`.
     fn create_broadcast(
         &self,
         publisher: &str,
         max_viewers: u16,
+        relay_use: RelayUse,
     ) -> impl Future<Output = Result<NewBroadcast, BroadcastError>> + Send;
     /// Admits certificate hash `viewer` to broadcast `id`; admitting again replaces the token.
     fn admit_viewer(
@@ -344,6 +383,8 @@ fn parse_answer(raw: &[u8]) -> Result<Answer> {
 struct BroadcastRequest<'a> {
     publisher: &'a str,
     max_viewers: u16,
+    #[serde(rename = "use", skip_serializing_if = "Option::is_none")]
+    relay_use: Option<&'static str>,
 }
 
 #[derive(Deserialize)]
@@ -413,11 +454,13 @@ impl RelayApi for HttpRelay {
         &self,
         publisher: &str,
         max_viewers: u16,
+        relay_use: RelayUse,
     ) -> Result<NewBroadcast, BroadcastError> {
         check_hash(publisher, "broadcasts").map_err(BroadcastError::Unavailable)?;
         let body = serde_json::to_vec(&BroadcastRequest {
             publisher,
             max_viewers,
+            relay_use: broadcast_use(relay_use),
         })
         .map_err(|e| BroadcastError::Unavailable(e.into()))?;
         let answer = self
@@ -645,6 +688,51 @@ mod tests {
     }
 
     #[test]
+    fn plugin_data_passes_through_with_its_limit_only_while_allowed() {
+        let parse = |uses: &str| {
+            let status: Status = serde_json::from_str(
+                &(r#"{"boot_id":"b","host":"relay.test","udp":1,"tcp":1,"fp":""#.to_owned()
+                    + &"ab".repeat(32)
+                    + r#"","plugin_data":{"max_kbps_per_sender":512}"#
+                    + uses
+                    + "}"),
+            )
+            .expect("parses");
+            status.validate().expect("valid")
+        };
+        let on = parse(r#","uses":["plugin_data","images"]"#);
+        assert_eq!(
+            on.announced_uses(),
+            Some(vec![RelayUse::Images, RelayUse::PluginData])
+        );
+        assert_eq!(on.plugin_data_kbps(), Some(512));
+        let off = parse(r#","uses":["images"]"#);
+        assert_eq!(off.announced_uses(), Some(vec![RelayUse::Images]));
+        assert_eq!(off.plugin_data_kbps(), None);
+        assert_eq!(parse("").plugin_data_kbps(), Some(512));
+    }
+
+    #[test]
+    fn a_broadcast_names_its_use_only_for_plugin_data() {
+        let body = |relay_use| {
+            serde_json::to_string(&BroadcastRequest {
+                publisher: "p",
+                max_viewers: 8,
+                relay_use: broadcast_use(relay_use),
+            })
+            .expect("encodes")
+        };
+        assert_eq!(
+            body(RelayUse::ScreenShare),
+            r#"{"publisher":"p","max_viewers":8}"#
+        );
+        assert_eq!(
+            body(RelayUse::PluginData),
+            r#"{"publisher":"p","max_viewers":8,"use":"plugin_data"}"#
+        );
+    }
+
+    #[test]
     fn status_is_checked_before_it_is_announced() {
         let good = Status {
             boot_id: "0123456789abcdef".into(),
@@ -654,10 +742,16 @@ mod tests {
             fp: "AB".repeat(32),
             uses: None,
             broadcast: None,
+            plugin_data: None,
         };
         assert_eq!(good.clone().validate().expect("valid").fp, "ab".repeat(32));
-        let bad: [fn(&mut Status); 8] = [
+        let bad: [fn(&mut Status); 9] = [
             |s| s.broadcast = Some(BroadcastStatus { max_viewers: 0 }),
+            |s| {
+                s.plugin_data = Some(PluginDataStatus {
+                    max_kbps_per_sender: 0,
+                })
+            },
             |s| s.host = "0.0.0.0".into(),
             |s| s.host = "224.0.0.1".into(),
             |s| s.host = "255.255.255.255".into(),

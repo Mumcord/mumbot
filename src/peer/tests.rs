@@ -40,7 +40,8 @@ struct MockRelay {
     status: Mutex<Option<Status>>,
     create_answer: Mutex<BcastAnswer>,
     admit_answer: Mutex<BcastAnswer>,
-    /// Broadcast calls in order, e.g. `create a1 25`, `admit 00000000000000b1 b1`.
+    /// Broadcast calls in order, e.g. `create a1 25`, `create a1 8 plg`,
+    /// `admit 00000000000000b1 b1`.
     bcast_calls: Mutex<Vec<String>>,
     next_id: Mutex<u64>,
     pair_answer: Mutex<PairAnswer>,
@@ -84,8 +85,13 @@ impl RelayApi for Arc<MockRelay> {
         &self,
         publisher: &str,
         max_viewers: u16,
+        relay_use: RelayUse,
     ) -> Result<NewBroadcast, BroadcastError> {
-        self.call(format!("create {} {max_viewers}", short(publisher)));
+        let kind = match relay_use {
+            RelayUse::ScreenShare => String::new(),
+            other => format!(" {}", other.as_str()),
+        };
+        self.call(format!("create {} {max_viewers}{kind}", short(publisher)));
         if let Some(error) = *self.create_answer.lock().expect("lock") {
             return Err(error());
         }
@@ -228,6 +234,7 @@ fn status(boot_id: &str) -> Status {
         fp: "ab".repeat(32),
         uses: None,
         broadcast: None,
+        plugin_data: None,
     }
 }
 
@@ -1159,4 +1166,194 @@ async fn a_lost_group_member_is_dropped_at_the_relay_with_its_pair_and_broadcast
         s.relay.removed.lock().expect("lock").len() == 1,
         "still only Bob"
     );
+}
+
+fn plugins_hello(sender: u32) -> Event {
+    plugin(
+        sender,
+        "mumcord.hello",
+        br#"{"app":"mumcord","v":1,"features":["p2p","plugins"]}"#,
+    )
+}
+
+fn plg_req(sender: u32) -> Event {
+    peer_message(
+        sender,
+        &format!(r#"{{"v":1,"t":"bcast-req","rid":"{RID}","max":8,"k":"plg"}}"#),
+    )
+}
+
+/// Adds a registered user with its own certificate in `channel`.
+fn add_user(s: &Setup, session: u32, channel: u32) {
+    let mut users = s.link.users.lock().expect("lock");
+    let users = users.as_mut().expect("users");
+    users.certs.insert(session, cert(&format!("u{session}")));
+    users.user_ids.insert(session, 100 + session);
+    users.channels.insert(session, channel);
+}
+
+#[tokio::test]
+async fn plugin_data_and_its_limit_go_into_the_announcement() {
+    let mut s = setup();
+    let mut relay = status("one");
+    relay.uses = Some(vec!["plugin_data".into(), "screen_share".into()]);
+    relay.plugin_data = Some(PluginDataStatus {
+        max_kbps_per_sender: 512,
+    });
+    *s.relay.status.lock().expect("lock") = Some(relay.clone());
+    s.peer.check_status().await;
+    s.peer.on_event(hello(ALICE), Instant::now()).await;
+    let sent = s.link.take_sent();
+    assert_eq!(sent[0].1["u"], serde_json::json!(["scr", "plg"]));
+    assert_eq!(sent[0].1["pk"], 512);
+
+    // Switched off: neither the use nor its limit is announced.
+    relay.uses = Some(vec!["screen_share".into()]);
+    *s.relay.status.lock().expect("lock") = Some(relay);
+    s.peer.check_status().await;
+    let sent = s.link.take_sent();
+    assert_eq!(sent[0].1["u"], serde_json::json!(["scr"]));
+    assert!(sent[0].1.get("pk").is_none());
+}
+
+#[tokio::test]
+async fn a_plugin_data_token_request_asks_the_relay_for_plugin_data() {
+    let mut s = ready().await;
+    s.peer
+        .on_event(request_for(ALICE, BOB, "plg"), Instant::now())
+        .await;
+    assert_eq!(
+        *s.relay.pair_uses.lock().expect("lock"),
+        vec![RelayUse::PluginData]
+    );
+    assert_eq!(s.link.take_sent()[0].1["t"], "token");
+}
+
+#[tokio::test]
+async fn a_plugin_data_broadcast_needs_the_plugins_hello_not_screen_sharing() {
+    let mut s = setup();
+    s.peer.check_status().await;
+    let now = Instant::now();
+    s.peer.on_event(screen_hello(ALICE), now).await;
+    s.peer.on_event(plugins_hello(BOB), now).await;
+    s.link.take_sent();
+    s.peer.on_event(plg_req(ALICE), now).await;
+    assert_eq!(only_error(&s, ALICE), "denied");
+    s.peer.on_event(bcast_req(BOB), now).await;
+    assert_eq!(only_error(&s, BOB), "denied");
+    assert_eq!(s.relay.take_calls(), Vec::<String>::new());
+
+    s.peer.on_event(plg_req(BOB), now).await;
+    assert_eq!(s.relay.take_calls(), vec!["create b1 8 plg"]);
+    assert_eq!(
+        s.link.take_sent(),
+        vec![(
+            vec![BOB],
+            serde_json::json!({"v":1,"t":"bcast","rid":RID,"id":BCAST_ID,
+                "tok":"P".repeat(43),"ttl":120})
+        )]
+    );
+}
+
+#[tokio::test]
+async fn a_plugin_data_broadcast_admits_only_plugin_clients_in_the_channel() {
+    let mut s = setup();
+    s.peer.check_status().await;
+    let now = Instant::now();
+    s.peer.on_event(plugins_hello(ALICE), now).await;
+    s.peer.on_event(screen_hello(BOB), now).await;
+    s.peer.on_event(plugins_hello(CAROL), now).await;
+    s.peer.on_event(plg_req(ALICE), now).await;
+    s.link.take_sent();
+    s.relay.take_calls();
+
+    s.peer.on_event(admit(ALICE, BOB), now).await;
+    assert_eq!(only_error(&s, ALICE), "denied");
+    s.peer.on_event(admit(ALICE, CAROL), now).await;
+    assert_eq!(only_error(&s, ALICE), "not-same-channel");
+    assert_eq!(s.relay.take_calls(), Vec::<String>::new());
+
+    set_channel(&s, CAROL, 0);
+    s.peer.on_event(admit(ALICE, CAROL), now).await;
+    assert_eq!(s.relay.take_calls(), vec!["admit 00000000000000b1 c2"]);
+    assert_eq!(s.link.take_sent()[0].0, vec![CAROL]);
+
+    // Moving out of the sender's channel ends the receiving, as with screen sharing.
+    set_channel(&s, CAROL, 5);
+    s.peer.on_event(moved(CAROL, cert("c2")), now).await;
+    assert_eq!(s.relay.take_calls(), vec!["kick 00000000000000b1 c2"]);
+}
+
+#[tokio::test]
+async fn a_session_may_share_its_screen_and_send_plugin_data_at_once() {
+    let mut s = setup();
+    s.peer.check_status().await;
+    let now = Instant::now();
+    s.peer
+        .on_event(
+            plugin(
+                ALICE,
+                "mumcord.hello",
+                br#"{"app":"mumcord","v":1,"features":["p2p","screen-share","plugins"]}"#,
+            ),
+            now,
+        )
+        .await;
+    s.peer.on_event(bcast_req(ALICE), now).await;
+    s.peer.on_event(plg_req(ALICE), now).await;
+    // A second plugin data request replaces only the plugin data broadcast.
+    s.peer.on_event(plg_req(ALICE), now).await;
+    assert_eq!(
+        s.relay.take_calls(),
+        vec![
+            "create a1 25",
+            "create a1 8 plg",
+            "create a1 8 plg",
+            "delete 00000000000000b2"
+        ]
+    );
+    // Leaving ends both.
+    s.peer.on_event(removed(ALICE, cert("a1")), now).await;
+    let mut calls = s.relay.take_calls();
+    calls.sort();
+    assert_eq!(
+        calls,
+        vec!["delete 00000000000000b1", "delete 00000000000000b3"]
+    );
+}
+
+#[tokio::test]
+async fn at_most_eight_plugin_data_senders_per_channel() {
+    let mut s = setup();
+    s.peer.check_status().await;
+    let now = Instant::now();
+    let senders: Vec<u32> = (20..29).collect();
+    for &session in &senders {
+        add_user(&s, session, 7);
+        s.peer.on_event(plugins_hello(session), now).await;
+    }
+    add_user(&s, 40, 9);
+    s.peer.on_event(plugins_hello(40), now).await;
+    s.link.take_sent();
+    for &session in &senders[..8] {
+        s.peer.on_event(plg_req(session), now).await;
+    }
+    assert_eq!(s.relay.take_calls().len(), 8);
+    s.link.take_sent();
+
+    // The ninth sender in the channel is refused before the relay is asked.
+    s.peer.on_event(plg_req(senders[8]), now).await;
+    assert_eq!(only_error(&s, senders[8]), "relay-full");
+    assert_eq!(s.relay.take_calls(), Vec::<String>::new());
+    // A running sender may renew its broadcast, and other channels are not affected.
+    s.peer.on_event(plg_req(senders[0]), now).await;
+    s.peer.on_event(plg_req(40), now).await;
+    assert_eq!(s.relay.take_calls().len(), 3);
+
+    // Once a sender leaves, the next one gets its place.
+    s.peer.on_event(removed(senders[1], cert("u21")), now).await;
+    s.relay.take_calls();
+    s.link.take_sent();
+    s.peer.on_event(plg_req(senders[8]), now).await;
+    assert_eq!(s.relay.take_calls(), vec!["create u28 8 plg"]);
 }

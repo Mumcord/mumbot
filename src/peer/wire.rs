@@ -21,6 +21,9 @@ pub const P2P_FEATURE: &str = "p2p";
 /// The hello feature of clients that can share and watch screens; broadcasts need it on both
 /// sides (Mumcord spec 07, section 6.6).
 pub const SCREEN_SHARE_FEATURE: &str = "screen-share";
+/// The hello feature of clients that run plugins; plugin data broadcasts need it on both sides
+/// (Mumcord spec 09, FR-9.88).
+pub const PLUGINS_FEATURE: &str = "plugins";
 
 #[derive(Deserialize)]
 struct Hello {
@@ -81,6 +84,7 @@ mod tests {
             seq: 4,
             uses: Some(vec![RelayUse::Images, RelayUse::Files]),
             broadcast: Some(25),
+            plugin_data_kbps: None,
         });
         assert_eq!(
             json(&relay),
