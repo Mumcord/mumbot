@@ -139,7 +139,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      MUMPEER_REF: c42aa1072cfec9b4d06d2853e459af44ad8bdf92
+      MUMPEER_REF: 6c7d1bb5dadb9fc413c7c7782d004ab93a8e7bb3
       MUMBOT_LIVE: "1"
       MUMBOT_PEER_RELAY: "1"
       MUMBOT_PORT_BASE: "44758"
@@ -163,6 +163,11 @@ jobs:
       - name: Run with relay profile all
         run: |
           MUMPEER_PROFILE=all mumpeer/testenv/up.sh --no-bot
+          cargo test --locked --features tester --test peer_broadcast_live -- --ignored --test-threads=1 --nocapture
+
+      - name: Run with relay profile no-camera
+        run: |
+          MUMPEER_PROFILE=no-camera mumpeer/testenv/up.sh --no-bot
           cargo test --locked --features tester --test peer_broadcast_live -- --ignored --test-threads=1 --nocapture
 
       - name: Run with relay profile no-broadcast
