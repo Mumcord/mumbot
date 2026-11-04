@@ -17,6 +17,9 @@ pub const MIN_SECRET_LEN: usize = 32;
 pub const CERT_REQUESTS_PER_MINUTE: usize = 10;
 /// Default open pairs per certificate, as many as the relay's default sessions per certificate.
 pub const MAX_PAIRS_PER_CERT: usize = 4;
+/// Camera broadcasts one channel may run at the same time (Mumcord spec 08, FR-8.87): a 3 × 3
+/// grid; more needs simulcast.
+pub const MAX_CAMERAS_PER_CHANNEL: usize = 9;
 /// Channel whose ACL defines `allowed_groups` when none is configured.
 pub const DEFAULT_GROUP_CHANNEL: &str = "Root";
 /// Most groups a bot is allowed to check, and the longest group name it accepts.
@@ -52,6 +55,9 @@ pub struct PeerConfig {
     pub cert_requests_per_minute: usize,
     #[serde(default = "default_max_pairs_per_cert")]
     pub max_pairs_per_cert: usize,
+    /// A camera request in a channel that already runs this many cameras gets `room-full`.
+    #[serde(default = "default_max_cameras_per_channel")]
+    pub max_cameras_per_channel: usize,
 }
 
 fn default_registered_only() -> bool {
@@ -68,6 +74,10 @@ fn default_cert_requests_per_minute() -> usize {
 
 fn default_max_pairs_per_cert() -> usize {
     MAX_PAIRS_PER_CERT
+}
+
+fn default_max_cameras_per_channel() -> usize {
+    MAX_CAMERAS_PER_CHANNEL
 }
 
 /// The API secret. `Debug` hides it so it can never end up in a log line.
@@ -166,6 +176,7 @@ impl PeerConfig {
             group_channel: DEFAULT_GROUP_CHANNEL.to_owned(),
             cert_requests_per_minute: CERT_REQUESTS_PER_MINUTE,
             max_pairs_per_cert: MAX_PAIRS_PER_CERT,
+            max_cameras_per_channel: MAX_CAMERAS_PER_CHANNEL,
         }
     }
 
@@ -185,8 +196,14 @@ impl PeerConfig {
                 self.api_url
             );
         }
-        if self.cert_requests_per_minute == 0 || self.max_pairs_per_cert == 0 {
-            bail!("peer: cert_requests_per_minute and max_pairs_per_cert must be at least 1");
+        if self.cert_requests_per_minute == 0
+            || self.max_pairs_per_cert == 0
+            || self.max_cameras_per_channel == 0
+        {
+            bail!(
+                "peer: cert_requests_per_minute, max_pairs_per_cert and max_cameras_per_channel \
+                 must be at least 1"
+            );
         }
         if self.allowed_groups.len() > MAX_GROUPS {
             bail!("peer: allowed_groups lists more than {MAX_GROUPS} groups");
@@ -397,11 +414,15 @@ mod tests {
         let mut bad = config("http://127.0.0.1:7480", None);
         bad.max_pairs_per_cert = 0;
         assert!(bad.validate().is_err());
+        let mut no_cameras = config("http://127.0.0.1:7480", None);
+        no_cameras.max_cameras_per_channel = 0;
+        assert!(no_cameras.validate().is_err());
         let parsed: PeerConfig =
             toml::from_str("api_url = \"http://127.0.0.1:7480\"\n").expect("toml");
         assert!(parsed.registered_only, "on by default");
         assert_eq!(parsed.cert_requests_per_minute, CERT_REQUESTS_PER_MINUTE);
         assert_eq!(parsed.max_pairs_per_cert, MAX_PAIRS_PER_CERT);
+        assert_eq!(parsed.max_cameras_per_channel, MAX_CAMERAS_PER_CHANNEL);
         assert!(parsed.allowed_groups.is_empty(), "groups are opt in");
         assert_eq!(parsed.group_channel, DEFAULT_GROUP_CHANNEL);
     }

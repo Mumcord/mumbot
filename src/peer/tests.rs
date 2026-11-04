@@ -1357,3 +1357,155 @@ async fn at_most_eight_plugin_data_senders_per_channel() {
     s.peer.on_event(plg_req(senders[8]), now).await;
     assert_eq!(s.relay.take_calls(), vec!["create u28 8 plg"]);
 }
+
+fn camera_hello(sender: u32) -> Event {
+    plugin(
+        sender,
+        "mumcord.hello",
+        br#"{"app":"mumcord","v":1,"features":["p2p","screen-share","camera"]}"#,
+    )
+}
+
+fn cam_req(sender: u32) -> Event {
+    peer_message(
+        sender,
+        &format!(r#"{{"v":1,"t":"bcast-req","rid":"{RID}","max":25,"k":"cam"}}"#),
+    )
+}
+
+#[tokio::test]
+async fn the_camera_use_goes_into_the_announcement() {
+    let mut s = setup();
+    let mut relay = status("one");
+    relay.uses = Some(vec!["camera".into(), "screen_share".into()]);
+    *s.relay.status.lock().expect("lock") = Some(relay);
+    s.peer.check_status().await;
+    s.peer.on_event(hello(ALICE), Instant::now()).await;
+    assert_eq!(
+        s.link.take_sent()[0].1["u"],
+        serde_json::json!(["scr", "cam"])
+    );
+}
+
+#[tokio::test]
+async fn a_camera_needs_the_camera_hello_and_runs_beside_a_screen_share() {
+    let mut s = setup();
+    s.peer.check_status().await;
+    let now = Instant::now();
+    s.peer.on_event(screen_hello(BOB), now).await;
+    s.peer.on_event(camera_hello(ALICE), now).await;
+    s.link.take_sent();
+    s.peer.on_event(cam_req(BOB), now).await;
+    assert_eq!(only_error(&s, BOB), "denied");
+    assert_eq!(s.relay.take_calls(), Vec::<String>::new());
+
+    s.peer.on_event(bcast_req(ALICE), now).await;
+    s.peer.on_event(cam_req(ALICE), now).await;
+    // A second camera request replaces only the camera.
+    s.peer.on_event(cam_req(ALICE), now).await;
+    assert_eq!(
+        s.relay.take_calls(),
+        vec![
+            "create a1 25",
+            "create a1 25 cam",
+            "create a1 25 cam",
+            "delete 00000000000000b2"
+        ]
+    );
+    let sent = s.link.take_sent();
+    assert!(
+        sent.iter()
+            .all(|(to, m)| *to == vec![ALICE] && m["t"] == "bcast")
+    );
+
+    // Changing channel ends the camera at the relay; the screen share keeps running (spec 07).
+    set_channel(&s, ALICE, 5);
+    s.peer.on_event(moved(ALICE, cert("a1")), now).await;
+    assert_eq!(s.relay.take_calls(), vec!["delete 00000000000000b3"]);
+    set_channel(&s, CAROL, 5);
+    s.peer.on_event(camera_hello(CAROL), now).await;
+    s.peer.on_event(admit(ALICE, CAROL), now).await;
+    assert_eq!(s.relay.take_calls(), vec!["admit 00000000000000b1 c2"]);
+}
+
+#[tokio::test]
+async fn a_full_camera_room_answers_room_full() {
+    let mut s = setup();
+    s.peer.check_status().await;
+    let now = Instant::now();
+    let senders: Vec<u32> = (20..30).collect();
+    for &session in &senders {
+        add_user(&s, session, 7);
+        s.peer.on_event(camera_hello(session), now).await;
+    }
+    add_user(&s, 40, 9);
+    s.peer.on_event(camera_hello(40), now).await;
+    s.link.take_sent();
+    for &session in &senders[..config::MAX_CAMERAS_PER_CHANNEL] {
+        s.peer.on_event(cam_req(session), now).await;
+    }
+    assert_eq!(s.relay.take_calls().len(), config::MAX_CAMERAS_PER_CHANNEL);
+    s.link.take_sent();
+
+    // The tenth camera in the channel is refused before the relay is asked.
+    s.peer.on_event(cam_req(senders[9]), now).await;
+    assert_eq!(only_error(&s, senders[9]), "room-full");
+    assert_eq!(s.relay.take_calls(), Vec::<String>::new());
+    // Screen sharing in that channel and cameras elsewhere are not affected.
+    s.peer.on_event(bcast_req(senders[9]), now).await;
+    s.peer.on_event(cam_req(40), now).await;
+    assert_eq!(s.relay.take_calls().len(), 2);
+    s.link.take_sent();
+
+    // A camera sender who moves away frees its place.
+    set_channel(&s, senders[0], 9);
+    s.peer.on_event(moved(senders[0], cert("u20")), now).await;
+    assert_eq!(s.relay.take_calls(), vec!["delete 00000000000000b1"]);
+    s.peer.on_event(cam_req(senders[9]), now).await;
+    assert_eq!(s.relay.take_calls(), vec!["create u29 25 cam"]);
+}
+
+#[tokio::test]
+async fn the_camera_room_size_comes_from_the_config() {
+    let mut s = setup_with(Rules {
+        max_cameras_per_channel: 1,
+        ..Rules::default()
+    });
+    s.peer.check_status().await;
+    let now = Instant::now();
+    s.peer.on_event(camera_hello(ALICE), now).await;
+    s.peer.on_event(camera_hello(BOB), now).await;
+    s.peer.on_event(cam_req(ALICE), now).await;
+    s.link.take_sent();
+    s.peer.on_event(cam_req(BOB), now).await;
+    assert_eq!(only_error(&s, BOB), "room-full");
+}
+
+#[tokio::test]
+async fn camera_admits_have_their_own_burst_bucket() {
+    let mut s = setup();
+    s.peer.check_status().await;
+    let now = Instant::now();
+    s.peer.on_event(camera_hello(ALICE), now).await;
+    s.peer.on_event(camera_hello(BOB), now).await;
+    s.peer.on_event(cam_req(ALICE), now).await;
+    s.link.take_sent();
+    // A sender admits the whole channel at once: 24 go through, the 25th waits.
+    for _ in 0..CAMERA_ADMIT_BURST {
+        s.peer.on_event(admit(ALICE, BOB), now).await;
+    }
+    let sent = s.link.take_sent();
+    assert!(sent.iter().all(|(_, m)| m["t"] == "bcast-tok"), "{sent:?}");
+    assert_eq!(sent.len(), CAMERA_ADMIT_BURST as usize);
+    s.peer.on_event(admit(ALICE, BOB), now).await;
+    assert_eq!(only_error(&s, ALICE), "rate-limited");
+    // The bucket refills by one per second (60 per minute).
+    let later = now + Duration::from_secs(1);
+    s.peer.on_event(admit(ALICE, BOB), later).await;
+    assert_eq!(s.link.take_sent()[0].1["t"], "bcast-tok");
+    s.peer.on_event(admit(ALICE, BOB), later).await;
+    assert_eq!(only_error(&s, ALICE), "rate-limited");
+    // Camera admits do not use up the shared budget of requests.
+    s.peer.on_event(bcast_req(ALICE), later).await;
+    assert_eq!(s.link.take_sent()[0].1["t"], "bcast");
+}

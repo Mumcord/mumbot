@@ -13,7 +13,10 @@
 //!    (Mumcord spec 07, FR-7.40 to FR-7.50, section 6.6; see [`broadcast`]). Plugin data uses the
 //!    same broadcasts with kind `plg` (Mumcord spec 09, FR-9.88): at most
 //!    [`PLUGIN_DATA_SENDERS_PER_CHANNEL`] senders per channel, and the bot never sees which plugin
-//!    the data belongs to.
+//!    the data belongs to. Cameras use kind `cam` (Mumcord spec 08, FR-8.85 to FR-8.90): a
+//!    session runs one broadcast per kind, so a screen share and a camera can run together; at
+//!    most `max_cameras_per_channel` cameras per channel (`room-full`), and a camera ends when
+//!    its sender leaves the channel it started in.
 //!
 //! Only registered users get tokens, or the members of the configured `allowed_groups` when they
 //! are set (issue #31). When the last session of a certificate leaves or changes certificate, the
@@ -68,6 +71,11 @@ pub const REQUESTS_PER_MINUTE: usize = 6;
 pub const BROADCAST_REQUESTS_PER_MINUTE: usize = 60;
 /// Most sessions in one channel that send plugin data broadcasts at the same time (FR-9.88).
 pub const PLUGIN_DATA_SENDERS_PER_CHANNEL: usize = 8;
+/// Camera admits a session may send at once: someone who turns the camera on admits everyone in
+/// the channel together (Mumcord spec 08, FR-8.89).
+pub const CAMERA_ADMIT_BURST: u32 = 24;
+/// Camera admits per session and minute once the burst is used up (FR-8.89).
+pub const CAMERA_ADMITS_PER_MINUTE: u32 = 60;
 
 /// What the module sees of the Mumble connection.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -107,6 +115,8 @@ pub struct Rules {
     pub allowed_groups: Vec<String>,
     /// Channel whose ACL defines them.
     pub group_channel: String,
+    /// Camera broadcasts per channel before `room-full` (FR-8.87).
+    pub max_cameras_per_channel: usize,
 }
 
 impl From<&PeerConfig> for Rules {
@@ -121,6 +131,7 @@ impl From<&PeerConfig> for Rules {
                 .map(|name| name.trim().to_owned())
                 .collect(),
             group_channel: config.group_channel.clone(),
+            max_cameras_per_channel: config.max_cameras_per_channel,
         }
     }
 }
@@ -133,6 +144,7 @@ impl Default for Rules {
             max_pairs_per_cert: config::MAX_PAIRS_PER_CERT,
             allowed_groups: Vec::new(),
             group_channel: String::from(config::DEFAULT_GROUP_CHANNEL),
+            max_cameras_per_channel: config::MAX_CAMERAS_PER_CHANNEL,
         }
     }
 }
@@ -169,6 +181,36 @@ impl<K: Eq + Hash> RequestLimiter<K> {
     }
 }
 
+/// Token bucket per key that allows `burst` calls at once and refills at `per_minute`. Kept as
+/// the time the bucket is full again (GCRA), so there is no timer and no float.
+struct BurstLimiter<K> {
+    interval: Duration,
+    tolerance: Duration,
+    full_at: HashMap<K, Instant>,
+}
+
+impl<K: Eq + Hash> BurstLimiter<K> {
+    fn new(burst: u32, per_minute: u32) -> Self {
+        let interval = Duration::from_secs(60) / per_minute;
+        Self {
+            interval,
+            tolerance: interval * burst.saturating_sub(1),
+            full_at: HashMap::new(),
+        }
+    }
+
+    fn allow(&mut self, key: K, now: Instant) -> bool {
+        // Forget full buckets so the map cannot grow with every session ever seen.
+        self.full_at.retain(|_, full| *full > now);
+        let full = self.full_at.get(&key).copied().unwrap_or(now).max(now);
+        if full - now > self.tolerance {
+            return false;
+        }
+        self.full_at.insert(key, full + self.interval);
+        true
+    }
+}
+
 /// State of the module between events.
 pub struct Peer<R, L> {
     relay: R,
@@ -190,8 +232,12 @@ pub struct Peer<R, L> {
     screen: HashSet<u32>,
     /// Sessions of `clients` whose hello also listed `plugins`.
     plugins: HashSet<u32>,
+    /// Sessions of `clients` whose hello also listed `camera`.
+    camera: HashSet<u32>,
     broadcasts: Broadcasts,
     bcast_limiter: RequestLimiter<u32>,
+    /// Camera admits, apart from `bcast_limiter` (FR-8.89).
+    camera_admit_limiter: BurstLimiter<u32>,
     /// Members of `rules.allowed_groups`, as the server listed them for the last query.
     groups: groups::Members,
     /// When the groups were last read, because the server never reports a membership change.
@@ -214,8 +260,10 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
             pairs: HashSet::new(),
             screen: HashSet::new(),
             plugins: HashSet::new(),
+            camera: HashSet::new(),
             broadcasts: Broadcasts::default(),
             bcast_limiter: RequestLimiter::new(BROADCAST_REQUESTS_PER_MINUTE),
+            camera_admit_limiter: BurstLimiter::new(CAMERA_ADMIT_BURST, CAMERA_ADMITS_PER_MINUTE),
             groups: groups::Members::new(),
             read_at: None,
         }
@@ -236,7 +284,8 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
                 if data.data_id == wire::HELLO_ID && wire::is_p2p_hello(&data.data) {
                     let screen = wire::hello_lists(&data.data, wire::SCREEN_SHARE_FEATURE);
                     let plugins = wire::hello_lists(&data.data, wire::PLUGINS_FEATURE);
-                    self.on_hello(sender, screen, plugins).await;
+                    let camera = wire::hello_lists(&data.data, wire::CAMERA_FEATURE);
+                    self.on_hello(sender, screen, plugins, camera).await;
                 } else if data.data_id == wire::DATA_ID
                     && let Ok(message) = PeerMessage::decode(&data.data)
                 {
@@ -265,6 +314,7 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
             Event::UserRemoved { user, .. } => {
                 self.screen.remove(&user.session);
                 self.plugins.remove(&user.session);
+                self.camera.remove(&user.session);
                 let cleanup = self.broadcasts.left(user.session);
                 self.clean_up(cleanup).await;
                 if let Some(Some(hash)) = self.clients.remove(&user.session) {
@@ -279,6 +329,7 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
                 self.pairs.clear();
                 self.screen.clear();
                 self.plugins.clear();
+                self.camera.clear();
                 self.broadcasts.clear();
                 // Group membership belongs to the connection too: the bot reads it again.
                 self.groups.clear();
@@ -442,10 +493,14 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
         }
     }
 
-    async fn on_hello(&mut self, sender: u32, screen: bool, plugins: bool) {
-        // The feature list may change with a later hello (screen sharing or plugins turned on or
-        // off).
-        for (set, listed) in [(&mut self.screen, screen), (&mut self.plugins, plugins)] {
+    async fn on_hello(&mut self, sender: u32, screen: bool, plugins: bool, camera: bool) {
+        // The feature list may change with a later hello (screen sharing, plugins or the camera
+        // turned on or off).
+        for (set, listed) in [
+            (&mut self.screen, screen),
+            (&mut self.plugins, plugins),
+            (&mut self.camera, camera),
+        ] {
             if listed {
                 set.insert(sender);
             } else {
@@ -542,17 +597,24 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
         }
         let users = self.link.users().await.ok_or(BcastError::RelayDown)?;
         let cert = self.member_cert(&users, sender, kind)?;
-        if kind == RelayUse::PluginData {
-            let channel = *users.channels.get(&sender).ok_or(BcastError::Denied)?;
-            // The sender's own running broadcast is replaced below, so it does not count. The
-            // closed list of reasons has nothing closer than "the relay runs all it allows".
+        // Plugin data has no reason of its own: nothing is closer than "the relay runs all it
+        // allows". A full camera room has `room-full` (FR-8.87).
+        let per_channel = match kind {
+            RelayUse::PluginData => Some((PLUGIN_DATA_SENDERS_PER_CHANNEL, BcastError::RelayFull)),
+            RelayUse::Camera => Some((self.rules.max_cameras_per_channel, BcastError::RoomFull)),
+            _ => None,
+        };
+        let channel = users.channels.get(&sender).copied();
+        if let Some((limit, reason)) = per_channel {
+            let channel = channel.ok_or(BcastError::Denied)?;
+            // The sender's own running broadcast is replaced below, so it does not count.
             let senders = self
                 .broadcasts
                 .publishers_in(kind, channel, sender, |session| {
                     users.channels.get(&session).copied()
                 });
-            if senders >= PLUGIN_DATA_SENDERS_PER_CHANNEL {
-                return Err(BcastError::RelayFull);
+            if senders >= limit {
+                return Err(reason);
             }
         }
         if self.state != State::Up {
@@ -573,7 +635,10 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
             self.delete_broadcast(created.id).await;
             return Err(BcastError::RelayDown);
         };
-        if let Some(old) = self.broadcasts.insert(created.id, sender, cert, kind) {
+        if let Some(old) = self
+            .broadcasts
+            .insert(created.id, sender, cert, kind, channel)
+        {
             self.delete_broadcast(old).await;
         }
         let message = PeerMessage::Broadcast {
@@ -593,7 +658,15 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
         viewer: u32,
         now: Instant,
     ) -> Result<(u32, PeerMessage), BcastError> {
-        if !self.bcast_limiter.allow(sender, now) {
+        // Camera admits come in bursts and have their own bucket (FR-8.89); everything else,
+        // unknown broadcasts too, counts against the shared one.
+        let allowed = match self.broadcasts.get(id) {
+            Some(broadcast) if broadcast.kind == RelayUse::Camera => {
+                self.camera_admit_limiter.allow(sender, now)
+            }
+            _ => self.bcast_limiter.allow(sender, now),
+        };
+        if !allowed {
             return Err(BcastError::RateLimited);
         }
         let users = self.link.users().await.ok_or(BcastError::RelayDown)?;
@@ -665,8 +738,8 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
     }
 
     /// The certificate of a session that may take part in a broadcast of `kind`: online with a
-    /// certificate, hello with `p2p` and `screen-share` (screen sharing) or `plugins` (plugin
-    /// data), and allowed to use the relay.
+    /// certificate, hello with `p2p` and `screen-share` (screen sharing), `plugins` (plugin
+    /// data) or `camera` (cameras), and allowed to use the relay.
     fn member_cert(
         &self,
         users: &Users,
@@ -675,6 +748,7 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
     ) -> Result<String, BcastError> {
         let feature = match kind {
             RelayUse::PluginData => &self.plugins,
+            RelayUse::Camera => &self.camera,
             _ => &self.screen,
         };
         match users.certs.get(&session) {
@@ -689,7 +763,8 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
         }
     }
 
-    /// Removes viewers who are no longer in their sharer's channel.
+    /// Ends cameras whose sender changed channel and removes viewers who are no longer in their
+    /// sharer's channel.
     async fn check_channels(&mut self) {
         let Some(users) = self.link.users().await else {
             return;
