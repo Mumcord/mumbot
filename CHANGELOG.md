@@ -12,6 +12,7 @@ All notable changes to Mumbot are listed here. The format follows
 
 ### Added
 
+- `server.avatar` sets the bot's avatar from an `https` image URL or a base64 string (Mumcord issue #460). The bot loads it once at startup, checks that it is a real PNG or JPEG, scales it to Mumble's 600 x 60 pixel limit and sets it as its user texture, so every client shows it. If loading fails, it logs a warning and runs without an avatar until the next start. See `docs/configuration.md`.
 - The bot's Mumcord hello carries `product` ("Mumbot") and `voice` in its `bot` object, and the bot reports "Mumbot <version>" as its client to the server, so Mumble and Mumcord show "Mumbot 0.x.y" instead of "Mumcord 0.x.y". `voice` is true when the music module runs, so Mumcord can show music bots in their channel and other bots only in its bot list (Mumcord issues #458 and #459). The scripted test bot still sends no `bot` object and looks like a regular Mumcord user.
 - The peer module announces which uses the relay allows (images, files, screen sharing) and its broadcast viewer limit to clients.
 - Token requests carry the use they are for; the bot passes it to the relay and answers `use-not-allowed` when the relay has switched that use off. A request without a use counts as screen sharing.

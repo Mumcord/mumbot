@@ -11,6 +11,7 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
 use crate::Module;
+use crate::avatar::AvatarSource;
 use crate::history::HistoryConfig;
 use crate::music::MusicConfig;
 use crate::peer::PeerConfig;
@@ -112,6 +113,9 @@ pub struct ServerConfig {
     /// refused. Required by the peer bot.
     #[serde(default)]
     pub server_cert_sha256: Option<String>,
+    /// The bot's avatar: an `https` image URL or a base64 string (no local path).
+    #[serde(default)]
+    pub avatar: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -163,6 +167,9 @@ impl WebhookConfig {
         }
         config.voice.validate(" in [voice]")?;
         config.validate_modules()?;
+        if let Some(avatar) = &config.server.avatar {
+            AvatarSource::parse(avatar).context("server.avatar")?;
+        }
         Ok(config)
     }
 
@@ -428,6 +435,7 @@ impl Default for ServerConfig {
             data_dir: None,
             superuser: false,
             server_cert_sha256: None,
+            avatar: None,
         }
     }
 }

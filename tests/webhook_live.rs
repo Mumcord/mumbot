@@ -53,6 +53,7 @@ fn config(dir: &std::path::Path, name: &str) -> Arc<WebhookConfig> {
             data_dir: Some(dir.to_owned()),
             superuser: false,
             server_cert_sha256: None,
+            avatar: None,
         },
         http: HttpConfig {
             listen: "127.0.0.1:0".to_owned(),

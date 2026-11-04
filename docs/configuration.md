@@ -39,6 +39,7 @@ Rules that apply to the whole file:
 | `data_dir` | path | `MUMBOT_DATA`, else `MUMCORD_BOT_DATA`, else `$XDG_DATA_HOME/mumbot`, else `~/.local/share/mumbot` | `MUMBOT_DATA` | Folder for the client certificate (`certs/<cert_name>/`). In Docker: `/data`, keep it on a volume. |
 | `server_cert_sha256` | string | none | | Required with the peer and plugins modules: SHA-256 of the server's certificate, 64 hex digits, colons allowed (`openssl x509 -noout -fingerprint -sha256`); a server with another certificate is refused. Optional with the history module. The webhook module alone rejects this key (it does not pin yet); with the peer, history or plugins module it protects the shared connection. |
 | `superuser` | boolean | `false` | `SUPERUSER_PASSWORD` | Log in as `SuperUser` with the password from `SUPERUSER_PASSWORD` instead of a certificate. Only for local test servers. |
+| `avatar` | string | none: no avatar | | The bot's avatar, shown by every Mumble client: an `https` image URL or a base64 string of a PNG or JPEG. No local file path, no plain `http`. The bot loads it once at startup (10 s timeout, at most 2 MiB, PNG or JPEG only), decodes it to check it, scales it down to Mumble's 600 x 60 pixel limit and sets it as its user texture. If that fails, the bot logs a warning with the reason, runs without an avatar and tries again only after a restart. |
 
 When `SERVER_PASSWORD` or `SUPERUSER_PASSWORD` is not in the environment, the bot also looks in
 the `.env` file of the test environment (`MUMBOT_TESTENV_DIR`, else `MUMCORD_TESTENV_DIR`, else

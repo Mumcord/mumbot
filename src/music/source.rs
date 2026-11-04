@@ -188,6 +188,18 @@ impl SourceUrl {
                 "URL sources are disabled".to_owned(),
             ));
         }
+        let parsed = Self::parse_any(url)?;
+        if !host_allowed(&parsed.host, &config.allow_hosts) {
+            return Err(SourceError::Forbidden(format!(
+                "host {} is not in allow_hosts",
+                parsed.host
+            )));
+        }
+        Ok(parsed)
+    }
+
+    /// Takes an `http(s)` URL apart without any allowlist; the caller applies its own policy.
+    pub fn parse_any(url: &str) -> Result<Self, SourceError> {
         let invalid = |why: &str| SourceError::Invalid(format!("invalid URL: {why}"));
         let (tls, rest) = if let Some(rest) = url.strip_prefix("https://") {
             (true, rest)
@@ -229,11 +241,6 @@ impl SourceUrl {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':'));
         if host.is_empty() || !host_chars {
             return Err(invalid("bad host"));
-        }
-        if !host_allowed(&host, &config.allow_hosts) {
-            return Err(SourceError::Forbidden(format!(
-                "host {host} is not in allow_hosts"
-            )));
         }
         let target = match target {
             "" => "/".to_owned(),
@@ -349,6 +356,16 @@ pub async fn fetch(
     config: &UrlConfig,
     max: usize,
 ) -> Result<Vec<u8>, SourceError> {
+    fetch_as(url, config, max, "audio/mpeg").await
+}
+
+/// [`fetch`] with the `Accept` header of the caller's content type.
+pub async fn fetch_as(
+    url: &SourceUrl,
+    config: &UrlConfig,
+    max: usize,
+    accept: &str,
+) -> Result<Vec<u8>, SourceError> {
     let timeout = Duration::from_secs(config.timeout_secs);
     tokio::time::timeout(timeout, async {
         let addr = resolve(url, config.allow_private).await?;
@@ -357,7 +374,7 @@ pub async fn fetch(
             .map_err(|_| SourceError::Fetch("cannot connect".to_owned()))?;
         // HTTP/1.0 keeps the answer free of chunked encoding.
         let request = format!(
-            "GET {} HTTP/1.0\r\nHost: {}\r\nUser-Agent: mumbot\r\nAccept: audio/mpeg\r\n\
+            "GET {} HTTP/1.0\r\nHost: {}\r\nUser-Agent: mumbot\r\nAccept: {accept}\r\n\
              Connection: close\r\n\r\n",
             url.target,
             url.host_header()
