@@ -4,11 +4,11 @@
 //! HTTP/1.1 with JSON and `Authorization: Bearer <secret>`:
 //! - `GET /v1/status` → `{"boot_id","host","udp","tcp","fp",…}`
 //! - `POST /v1/pairs` with `{"a","b","use"}` (two certificate hashes and
-//!   `images|files|screen_share|plugin_data`) → `201 {"tok","expires_in"}`, `403` when the use is
+//!   `images|files|screen_share|plugin_data|camera`) → `201 {"tok","expires_in"}`, `403` when the use is
 //!   disabled, `503` when the relay is full, `429` when the bot asks too often
 //! - `DELETE /v1/peers/{hash}` → `204`; the relay drops the hash from all pairs and broadcasts
 //! - `POST /v1/broadcasts` with `{"publisher","max_viewers","use"}` (`use` is `screen_share` when
-//!   missing, or `plugin_data`) → `201 {"id","tok","expires_in"}`, `403` when that use is
+//!   missing, `plugin_data` or `camera`) → `201 {"id","tok","expires_in"}`, `403` when that use is
 //!   disabled, `503` when the relay runs all broadcasts it allows
 //! - `POST /v1/broadcasts/{id}/viewers` with `{"viewer"}` → `201 {"tok","expires_in"}`, `409`
 //!   when the broadcast is full, `404` when it has ended
@@ -52,7 +52,7 @@ pub struct Status {
     /// SHA-256 of the relay certificate.
     pub fp: String,
     /// The uses the relay allows, by its names (`images`, `files`, `screen_share`,
-    /// `plugin_data`). `None` for a relay that predates the setting: it allows everything.
+    /// `plugin_data`, `camera`). `None` for a relay that predates the setting: it allows everything.
     #[serde(default)]
     pub uses: Option<Vec<String>>,
     /// Broadcast limits; absent when the relay offers no broadcasts.
@@ -82,6 +82,7 @@ fn api_use_name(relay_use: RelayUse) -> &'static str {
         RelayUse::Files => "files",
         RelayUse::ScreenShare => "screen_share",
         RelayUse::PluginData => "plugin_data",
+        RelayUse::Camera => "camera",
     }
 }
 
@@ -91,11 +92,12 @@ fn broadcast_use(relay_use: RelayUse) -> Option<&'static str> {
     (relay_use != RelayUse::ScreenShare).then(|| api_use_name(relay_use))
 }
 
-const ALL_USES: [RelayUse; 4] = [
+const ALL_USES: [RelayUse; 5] = [
     RelayUse::Images,
     RelayUse::Files,
     RelayUse::ScreenShare,
     RelayUse::PluginData,
+    RelayUse::Camera,
 ];
 
 impl Status {
@@ -688,6 +690,21 @@ mod tests {
     }
 
     #[test]
+    fn the_camera_use_passes_through_to_the_announcement() {
+        let status: Status = serde_json::from_str(
+            &(r#"{"boot_id":"b","host":"relay.test","udp":1,"tcp":1,"fp":""#.to_owned()
+                + &"ab".repeat(32)
+                + r#"","uses":["camera","screen_share"]}"#),
+        )
+        .expect("parses");
+        let status = status.validate().expect("valid");
+        assert_eq!(
+            status.announced_uses(),
+            Some(vec![RelayUse::ScreenShare, RelayUse::Camera])
+        );
+    }
+
+    #[test]
     fn plugin_data_passes_through_with_its_limit_only_while_allowed() {
         let parse = |uses: &str| {
             let status: Status = serde_json::from_str(
@@ -713,7 +730,7 @@ mod tests {
     }
 
     #[test]
-    fn a_broadcast_names_its_use_only_for_plugin_data() {
+    fn a_broadcast_names_its_use_except_for_screen_sharing() {
         let body = |relay_use| {
             serde_json::to_string(&BroadcastRequest {
                 publisher: "p",
@@ -729,6 +746,10 @@ mod tests {
         assert_eq!(
             body(RelayUse::PluginData),
             r#"{"publisher":"p","max_viewers":8,"use":"plugin_data"}"#
+        );
+        assert_eq!(
+            body(RelayUse::Camera),
+            r#"{"publisher":"p","max_viewers":8,"use":"camera"}"#
         );
     }
 

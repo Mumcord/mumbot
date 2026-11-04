@@ -1,5 +1,5 @@
-//! Broadcasts the bot set up at the relay: screen sharing (Mumcord spec 07, FR-7.40 to FR-7.50)
-//! and plugin data (Mumcord spec 09, FR-9.88). The table keeps who publishes each one, what it
+//! Broadcasts the bot set up at the relay: screen sharing (Mumcord spec 07, FR-7.40 to FR-7.50),
+//! plugin data (Mumcord spec 09, FR-9.88) and cameras (Mumcord spec 08, FR-8.86 to FR-8.88). The table keeps who publishes each one, what it
 //! carries and which sessions it admitted, so the bot can check `bcast-admit` and `bcast-kick`
 //! against the publisher and clean up at the relay when people leave.
 //!
@@ -16,8 +16,11 @@ pub struct Broadcast {
     /// The session that asked for it; only it may admit and kick.
     pub publisher: u32,
     pub publisher_cert: String,
-    /// `ScreenShare` or `PluginData`.
+    /// `ScreenShare`, `PluginData` or `Camera`.
     pub kind: RelayUse,
+    /// For a camera, the channel it was started in: it ends when its publisher leaves it
+    /// (FR-8.88). Other kinds follow their publisher and keep `None`.
+    pub channel: Option<u32>,
     /// Admitted sessions with the certificate hash the relay knows them by.
     pub viewers: HashMap<u32, String>,
 }
@@ -37,14 +40,16 @@ pub struct Broadcasts {
 
 impl Broadcasts {
     /// Records a new broadcast of `publisher` and returns the one it replaces: a session shares
-    /// one screen and sends one plugin data broadcast at a time, so an older broadcast of the
-    /// same session and kind is finished.
+    /// one screen, one camera and one plugin data broadcast at a time, so an older broadcast of
+    /// the same session and kind is finished. `channel` is the publisher's channel, kept for
+    /// cameras only.
     pub fn insert(
         &mut self,
         id: BroadcastId,
         publisher: u32,
         cert: String,
         kind: RelayUse,
+        channel: Option<u32>,
     ) -> Option<BroadcastId> {
         let old = self.of_publisher(publisher, kind);
         if let Some(old) = old {
@@ -56,6 +61,7 @@ impl Broadcasts {
                 publisher,
                 publisher_cert: cert,
                 kind,
+                channel: channel.filter(|_| kind == RelayUse::Camera),
                 viewers: HashMap::new(),
             },
         );
@@ -136,11 +142,21 @@ impl Broadcasts {
         cleanup
     }
 
-    /// Removes every admitted viewer who is no longer in its publisher's channel (FR-7.42 holds
-    /// for the whole broadcast, not only at admission). `channel_of` is `None` for sessions not
-    /// on the server.
+    /// Ends every camera whose publisher left the channel it started in (FR-8.88) and removes
+    /// every admitted viewer who is no longer in its publisher's channel (FR-7.42 holds for the
+    /// whole broadcast, not only at admission). `channel_of` is `None` for sessions not on the
+    /// server.
     pub fn outside_channel(&mut self, channel_of: impl Fn(u32) -> Option<u32>) -> Vec<Cleanup> {
         let mut cleanup = Vec::new();
+        self.by_id.retain(|id, broadcast| {
+            let moved = broadcast.channel.is_some_and(|started| {
+                channel_of(broadcast.publisher).is_some_and(|now| now != started)
+            });
+            if moved {
+                cleanup.push(Cleanup::Delete(*id));
+            }
+            !moved
+        });
         for (id, broadcast) in &mut self.by_id {
             let Some(channel) = channel_of(broadcast.publisher) else {
                 continue;
@@ -176,10 +192,11 @@ mod tests {
 
     const SCR: RelayUse = RelayUse::ScreenShare;
     const PLG: RelayUse = RelayUse::PluginData;
+    const CAM: RelayUse = RelayUse::Camera;
 
     fn table() -> Broadcasts {
         let mut table = Broadcasts::default();
-        assert_eq!(table.insert(A, 10, "p".into(), SCR), None);
+        assert_eq!(table.insert(A, 10, "p".into(), SCR, Some(1)), None);
         table.admit(A, 20, "v1".into());
         table.admit(A, 21, "v1".into());
         table.admit(A, 30, "v2".into());
@@ -189,7 +206,7 @@ mod tests {
     #[test]
     fn a_new_broadcast_of_the_same_session_replaces_the_old_one() {
         let mut table = table();
-        assert_eq!(table.insert(B, 10, "p".into(), SCR), Some(A));
+        assert_eq!(table.insert(B, 10, "p".into(), SCR, None), Some(A));
         assert_eq!(table.get(A), None);
         assert_eq!(table.of_publisher(10, SCR), Some(B));
     }
@@ -197,19 +214,22 @@ mod tests {
     #[test]
     fn a_session_has_one_broadcast_per_kind() {
         let mut table = table();
-        assert_eq!(table.insert(B, 10, "p".into(), PLG), None);
+        assert_eq!(table.insert(B, 10, "p".into(), PLG, None), None);
         assert_eq!(table.of_publisher(10, SCR), Some(A));
         assert_eq!(table.of_publisher(10, PLG), Some(B));
-        assert_eq!(table.insert(BroadcastId(3), 10, "p".into(), PLG), Some(B));
+        assert_eq!(
+            table.insert(BroadcastId(3), 10, "p".into(), PLG, None),
+            Some(B)
+        );
         assert_eq!(table.of_publisher(10, SCR), Some(A));
     }
 
     #[test]
     fn publishers_are_counted_per_kind_and_channel() {
         let mut table = table();
-        table.insert(B, 11, "q".into(), PLG);
-        table.insert(BroadcastId(3), 12, "r".into(), PLG);
-        table.insert(BroadcastId(4), 13, "s".into(), PLG);
+        table.insert(B, 11, "q".into(), PLG, None);
+        table.insert(BroadcastId(3), 12, "r".into(), PLG, None);
+        table.insert(BroadcastId(4), 13, "s".into(), PLG, None);
         let channels = HashMap::from([(10, 1), (11, 1), (12, 1), (13, 2)]);
         let channel_of = |s: u32| channels.get(&s).copied();
         assert_eq!(table.publishers_in(PLG, 1, 0, channel_of), 2);
@@ -255,5 +275,37 @@ mod tests {
         table.admit(A, 30, "v2".into());
         let channels = HashMap::from([(10, 3)]);
         assert_eq!(table.outside_channel(|s| channels.get(&s).copied()), vec![]);
+    }
+
+    #[test]
+    fn a_session_runs_a_screen_share_and_a_camera_together() {
+        let mut table = table();
+        assert_eq!(table.insert(B, 10, "p".into(), CAM, Some(1)), None);
+        assert_eq!(table.of_publisher(10, SCR), Some(A));
+        assert_eq!(table.of_publisher(10, CAM), Some(B));
+        assert_eq!(table.get(A).expect("screen").channel, None);
+        assert_eq!(table.get(B).expect("camera").channel, Some(1));
+    }
+
+    #[test]
+    fn a_camera_ends_when_its_publisher_leaves_the_channel_a_screen_share_does_not() {
+        let mut table = table();
+        table.insert(B, 10, "p".into(), CAM, Some(1));
+        table.admit(B, 20, "v1".into());
+        let stay = HashMap::from([(10, 1), (20, 1)]);
+        assert_eq!(table.outside_channel(|s| stay.get(&s).copied()), vec![]);
+        let moved = HashMap::from([(10, 2), (20, 1), (21, 1), (30, 1)]);
+        let cleanup = table.outside_channel(|s| moved.get(&s).copied());
+        // The camera is deleted; the screen share stays and its viewers left behind go.
+        assert!(cleanup.contains(&Cleanup::Delete(B)));
+        assert!(!cleanup.contains(&Cleanup::Delete(A)));
+        assert_eq!(table.get(B), None);
+        assert_eq!(table.of_publisher(10, SCR), Some(A));
+        // Moving back does not bring the camera back, and a publisher off the server is left to
+        // the leave handling.
+        table.insert(BroadcastId(3), 11, "q".into(), CAM, Some(1));
+        let gone = HashMap::from([(10, 2)]);
+        assert_eq!(table.outside_channel(|s| gone.get(&s).copied()), vec![]);
+        assert!(table.get(BroadcastId(3)).is_some());
     }
 }

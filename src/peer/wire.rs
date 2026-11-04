@@ -10,8 +10,8 @@
 use serde::Deserialize;
 
 pub use mumcord_p2p::{
-    BroadcastErrorReason, BroadcastId, PEER_DATA_ID as DATA_ID, PeerMessage, RelayAnnouncement,
-    RelayState, RelayToken, RelayUse, RequestId, TokenErrorReason,
+    BroadcastErrorReason, BroadcastId, CAMERA_FEATURE, PEER_DATA_ID as DATA_ID, PeerMessage,
+    RelayAnnouncement, RelayState, RelayToken, RelayUse, RequestId, TokenErrorReason,
 };
 
 /// Plugin data id of the hello every Mumcord client sends on connect and to people who join.
