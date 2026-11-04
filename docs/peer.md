@@ -45,7 +45,7 @@ official Mumble clients ignore. Each message is compact JSON of at most 1000 byt
    and answers it, to that client only:
 
    ```json
-   {"v":1,"t":"relay","host":"relay.example.org","udp":443,"tcp":443,"fp":"<64 hex>","state":"up","seq":4,"u":["img","file","scr","plg"],"bc":25,"pk":512}
+   {"v":1,"t":"relay","host":"relay.example.org","udp":443,"tcp":443,"fp":"<64 hex>","state":"up","seq":4,"u":["img","file","scr","plg","cam"],"bc":25,"pk":512}
    ```
 
    `host`, ports and `fp` (SHA-256 of the relay certificate) come from the relay's status, so the
@@ -59,7 +59,7 @@ official Mumble clients ignore. Each message is compact JSON of at most 1000 byt
    [How Mumcord clients see the bot](modules.md#how-mumcord-clients-see-the-bot)).
 
    `u` lists what the relay allows (`img` full-size images, `file` files, `scr` screen sharing,
-   `plg` plugin data; it comes from `uses` in the relay's status, and a relay without `uses` leaves
+   `plg` plugin data, `cam` cameras; it comes from `uses` in the relay's status, and a relay without `uses` leaves
    `u` out, which means all) and `bc` is the relay's maximum viewers per broadcast
    (`broadcast.max_viewers`; left out when the relay offers no broadcasts). `pk` is the most
    kilobits per second one participant may send as plugin data (`plugin_data.max_kbps_per_sender`);
@@ -137,6 +137,22 @@ official Mumble clients ignore. Each message is compact JSON of at most 1000 byt
    cleanup below are the same as for screen sharing. The bot sees only that a broadcast carries
    plugin data, never which plugin or what it sends.
 
+   **Cameras.** A camera is a broadcast with `k` set to `cam` (Mumcord spec 08):
+
+   ```json
+   {"v":1,"t":"bcast-req","rid":"<16 hex>","max":25,"k":"cam"}
+   ```
+
+   For cameras the hello of sender and viewer must list `p2p` and `camera` instead of
+   `screen-share`. The bot creates the broadcast at the relay with use `camera`. Because a session
+   runs one broadcast per kind, someone can share the screen and the camera at the same time. A
+   channel runs at most `max_cameras_per_channel` cameras (default 9); one more gets `room-full`
+   before the relay is asked, and a sender renewing its own camera keeps its place. Unlike a screen
+   share, a camera ends when its sender changes channel: the bot deletes it at the relay. Camera
+   admits do not count against the 60 requests per minute; they have their own bucket of 24 at
+   once (someone turning the camera on admits everyone in the channel together), refilling at 60
+   per minute. Kicks and the other cleanup are the same as for screen sharing.
+
    When someone presses Watch, the sharer decides (not full, viewer not blocked) and admits them:
 
    ```json
@@ -163,7 +179,7 @@ official Mumble clients ignore. Each message is compact JSON of at most 1000 byt
      channel: removed at the relay (unless another admitted session with the same certificate
      still watches).
    - The sharer moves to another channel: every viewer not in the new channel is removed; the
-     broadcast keeps running.
+     broadcast keeps running. A camera is deleted at the relay instead.
    - The sharer leaves or changes certificate: the broadcast is deleted at the relay.
    - After a reconnect of the bot or a relay restart the bot forgets its broadcasts; the relay ends
      unused ones after 60 seconds without frames.
@@ -173,13 +189,14 @@ official Mumble clients ignore. Each message is compact JSON of at most 1000 byt
 
    | `r` | Why |
    | --- | --- |
-   | `denied` | The sender or viewer has no certificate, sent no hello with `p2p` and `screen-share` (`plugins` for plugin data), may not use the relay, or the viewer is the sharer, the bot or not on the server; the sender is not the broadcast's publisher; or the broadcast is unknown or has already ended at the relay. |
+   | `denied` | The sender or viewer has no certificate, sent no hello with `p2p` and `screen-share` (`plugins` for plugin data, `camera` for cameras), may not use the relay, or the viewer is the sharer, the bot or not on the server; the sender is not the broadcast's publisher; or the broadcast is unknown or has already ended at the relay. |
    | `not-same-channel` | The viewer is not in the sharer's channel. |
    | `full` | The broadcast has as many viewers as it allows. |
-   | `rate-limited` | More than 60 `bcast-req` and `bcast-admit` from this session in a minute. |
+   | `rate-limited` | More than 60 `bcast-req` and `bcast-admit` from this session in a minute, or camera admits beyond a burst of 24 and 60 per minute. |
    | `relay-down` | The relay is down or did not answer. |
    | `relay-full` | The relay runs as many broadcasts as it allows, or none at all (`max_broadcasts = 0`); or 8 other sessions in the sender's channel already send plugin data. |
-   | `use-not-allowed` | The relay has switched screen sharing (or plugin data, for `k = plg`) off. |
+   | `room-full` | Only for `k = cam`: the sender's channel already runs `max_cameras_per_channel` other cameras. |
+   | `use-not-allowed` | The relay has switched screen sharing (or plugin data for `k = plg`, cameras for `k = cam`) off. |
 
    The relay itself never sees Mumble sessions, only certificate hashes, and cannot read the
    stream: the media is encrypted end to end between sharer and viewers.
