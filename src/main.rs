@@ -20,7 +20,7 @@ use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use mumbot::voice_settings::{VoiceConfig, VoiceSettings};
 use mumbot::webhook::WebhookConfig;
-use mumbot::{Bot, BotConfig, Module, env, modules};
+use mumbot::{Bot, BotConfig, Module, env, hello, modules};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -188,6 +188,9 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
+    // Only module runs are bots; the scripted test bot keeps the default release so it shows as
+    // a regular Mumcord user (Mumcord issue #458).
+    mumcord_protocol::set_client_release(hello::client_release());
     let config = Arc::new(WebhookConfig::load(&config, &chosen)?);
     // Checked now so a bad value stops the start, not the first voice a module sends.
     let music = config.music.as_ref().map(|music| music.voice());
