@@ -93,6 +93,7 @@ bot ignores it. See [peer.md](peer.md).
 | `group_channel` | name or `Root/Path` | `Root` | | The channel whose ACL defines `allowed_groups`. |
 | `cert_requests_per_minute` | integer | `10` | | Token requests per certificate and minute, across all sessions with that certificate (besides 6 per session). At least 1. |
 | `max_pairs_per_cert` | integer | `4` | | Open relay pairs per certificate. At least 1. |
+| `max_cameras_per_channel` | integer | `9` | | Cameras one channel may run at the same time; one more gets `room-full`. At least 1. See [peer.md](peer.md#how-it-works). |
 
 ## `[music]`: the music bot
 
