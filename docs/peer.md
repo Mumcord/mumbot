@@ -45,7 +45,7 @@ official Mumble clients ignore. Each message is compact JSON of at most 1000 byt
    and answers it, to that client only:
 
    ```json
-   {"v":1,"t":"relay","host":"relay.example.org","udp":443,"tcp":443,"fp":"<64 hex>","state":"up","seq":4,"u":["img","file","scr"],"bc":25}
+   {"v":1,"t":"relay","host":"relay.example.org","udp":443,"tcp":443,"fp":"<64 hex>","state":"up","seq":4,"u":["img","file","scr","plg"],"bc":25,"pk":512}
    ```
 
    `host`, ports and `fp` (SHA-256 of the relay certificate) come from the relay's status, so the
@@ -58,19 +58,23 @@ official Mumble clients ignore. Each message is compact JSON of at most 1000 byt
    bot answers each hello with its own, which says it is a bot (see
    [How Mumcord clients see the bot](modules.md#how-mumcord-clients-see-the-bot)).
 
-   `u` lists what the relay allows (`img` full-size images, `file` files, `scr` screen sharing; it
-   comes from `uses` in the relay's status, and a relay without `uses` leaves `u` out, which means
-   all) and `bc` is the relay's maximum viewers per broadcast (`broadcast.max_viewers`; left out when
-   the relay offers no broadcasts). When either changes, every remembered client gets a new
-   announcement.
+   `u` lists what the relay allows (`img` full-size images, `file` files, `scr` screen sharing,
+   `plg` plugin data; it comes from `uses` in the relay's status, and a relay without `uses` leaves
+   `u` out, which means all) and `bc` is the relay's maximum viewers per broadcast
+   (`broadcast.max_viewers`; left out when the relay offers no broadcasts). `pk` is the most
+   kilobits per second one participant may send as plugin data (`plugin_data.max_kbps_per_sender`);
+   it is left out when the relay reports no such limit or does not allow plugin data. When any of
+   them changes, every remembered client gets a new announcement.
 
 2. **Token.** A client that wants a relayed connection to one other person asks the bot:
 
    ```json
-   {"v":1,"t":"token-req","rid":"<16 hex>","peer":<session of the other person>,"use":"img|file|scr"}
+   {"v":1,"t":"token-req","rid":"<16 hex>","peer":<session of the other person>,"use":"img|file|scr|plg"}
    ```
 
-   `use` says what the pair is for; a request without it (an older client) counts as `scr`.
+   `use` says what the pair is for; a request without it (an older client) counts as `scr`. `plg`
+   is plugin data between two Mumcord clients (Mumcord spec 09); the bot asks the relay for a pair
+   with use `plugin_data` and never learns which plugin the data belongs to.
 
    The requester is the session the server stamped on the message, never a field of it. Both must
    be online with a certificate, both must have sent a hello with `p2p`, both must be allowed to
@@ -114,7 +118,24 @@ official Mumble clients ignore. Each message is compact JSON of at most 1000 byt
    {"v":1,"t":"bcast","rid":"<16 hex>","id":"<16 hex>","tok":"<43 base64url>","ttl":120}
    ```
 
-   A session runs one broadcast at a time: a new `bcast-req` ends its previous broadcast.
+   A session runs one broadcast of each kind at a time: a new `bcast-req` ends its previous
+   broadcast of the same kind.
+
+   **Plugin data.** Plugins send data to everyone in the channel through the same broadcasts, with
+   `k` set to `plg` (Mumcord spec 09); without `k`, or with `"k":"scr"`, the request is a screen
+   share:
+
+   ```json
+   {"v":1,"t":"bcast-req","rid":"<16 hex>","max":8,"k":"plg"}
+   ```
+
+   For plugin data the hello of sender and receiver must list `p2p` and `plugins` instead of
+   `screen-share`. The bot creates the broadcast at the relay with use `plugin_data`, and at most
+   8 sessions in one channel send plugin data broadcasts at the same time; a sender renewing its
+   own broadcast keeps its place. The cap is checked when a broadcast is created, so someone who
+   moves into a channel keeps a running broadcast. Admission, kicks, the rate limit and the
+   cleanup below are the same as for screen sharing. The bot sees only that a broadcast carries
+   plugin data, never which plugin or what it sends.
 
    When someone presses Watch, the sharer decides (not full, viewer not blocked) and admits them:
 
@@ -152,13 +173,13 @@ official Mumble clients ignore. Each message is compact JSON of at most 1000 byt
 
    | `r` | Why |
    | --- | --- |
-   | `denied` | The sender or viewer has no certificate, sent no hello with `p2p` and `screen-share`, may not use the relay, or the viewer is the sharer, the bot or not on the server; the sender is not the broadcast's publisher; or the broadcast is unknown or has already ended at the relay. |
+   | `denied` | The sender or viewer has no certificate, sent no hello with `p2p` and `screen-share` (`plugins` for plugin data), may not use the relay, or the viewer is the sharer, the bot or not on the server; the sender is not the broadcast's publisher; or the broadcast is unknown or has already ended at the relay. |
    | `not-same-channel` | The viewer is not in the sharer's channel. |
    | `full` | The broadcast has as many viewers as it allows. |
    | `rate-limited` | More than 60 `bcast-req` and `bcast-admit` from this session in a minute. |
    | `relay-down` | The relay is down or did not answer. |
-   | `relay-full` | The relay runs as many broadcasts as it allows, or none at all (`max_broadcasts = 0`). |
-   | `use-not-allowed` | The relay has switched screen sharing off. |
+   | `relay-full` | The relay runs as many broadcasts as it allows, or none at all (`max_broadcasts = 0`); or 8 other sessions in the sender's channel already send plugin data. |
+   | `use-not-allowed` | The relay has switched screen sharing (or plugin data, for `k = plg`) off. |
 
    The relay itself never sees Mumble sessions, only certificate hashes, and cannot read the
    stream: the media is encrypted end to end between sharer and viewers.
@@ -222,9 +243,9 @@ times out after 5 seconds.
 | Call | Answer | When |
 | --- | --- | --- |
 | `GET /v1/status` | `200 {"boot_id","host","udp","tcp","fp",…}` | Every 30 seconds; the first check right at start. A new `boot_id` means the relay restarted. |
-| `POST /v1/pairs` with `{"a":"<cert hash>","b":"<cert hash>"}` | `201 {"tok","expires_in"}`, `503` relay full, `429` rate limited | For every accepted token request. |
+| `POST /v1/pairs` with `{"a":"<cert hash>","b":"<cert hash>","use":"images|files|screen_share|plugin_data"}` | `201 {"tok","expires_in"}`, `403` use off, `503` relay full, `429` rate limited | For every accepted token request. |
 | `DELETE /v1/peers/{cert hash}` | `204` | When the last remembered session with that certificate leaves or changes certificate, or loses access. |
-| `POST /v1/broadcasts` with `{"publisher":"<cert hash>","max_viewers":n}` | `201 {"id","tok","expires_in"}`, `403` screen sharing off, `503` no room for another broadcast | For every accepted `bcast-req`. |
+| `POST /v1/broadcasts` with `{"publisher":"<cert hash>","max_viewers":n}`, plus `"use":"plugin_data"` for plugin data | `201 {"id","tok","expires_in"}`, `403` that use off, `503` no room for another broadcast | For every accepted `bcast-req`. |
 | `POST /v1/broadcasts/{id}/viewers` with `{"viewer":"<cert hash>"}` | `201 {"tok","expires_in"}`, `409` broadcast full, `404` broadcast ended | For every accepted `bcast-admit`. |
 | `DELETE /v1/broadcasts/{id}/viewers/{cert hash}` | `204` | On `bcast-kick`, and when an admitted viewer leaves or moves out of the sharer's channel. |
 | `DELETE /v1/broadcasts/{id}` | `204` | When the sharer leaves or starts a new broadcast. |
