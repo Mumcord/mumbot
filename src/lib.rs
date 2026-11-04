@@ -8,6 +8,7 @@
 
 #[cfg(feature = "tester")]
 mod acl;
+pub mod avatar;
 mod bot;
 pub mod cert;
 pub mod checks;

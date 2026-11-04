@@ -5,8 +5,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use mumcord_protocol::{DenyKind, Event, Handle, ServerState, TextTarget, permissions};
-use tokio::sync::{Mutex, broadcast};
+use tokio::sync::{Mutex, OnceCell, broadcast};
 
+use crate::avatar::{self, AvatarSource};
 use crate::bot::BROADCAST_CAPACITY;
 use crate::checks::resolve_channel;
 use crate::hello;
@@ -29,6 +30,8 @@ pub struct BotApi {
     started: Instant,
     /// Outlives reconnects, so a subscriber keeps one stream across them.
     events: broadcast::Sender<Event>,
+    /// The avatar, loaded at the first login only: a failed load is not retried until a restart.
+    avatar: OnceCell<Option<Vec<u8>>>,
 }
 
 impl BotApi {
@@ -38,6 +41,7 @@ impl BotApi {
             config,
             started: Instant::now(),
             events: broadcast::channel(BROADCAST_CAPACITY).0,
+            avatar: OnceCell::new(),
         }
     }
 
@@ -65,11 +69,27 @@ impl BotApi {
         self.settle(bot).await
     }
 
+    /// The processed avatar from `server.avatar`, if it is set and could be loaded.
+    async fn avatar(&self) -> Option<&Vec<u8>> {
+        self.avatar
+            .get_or_init(|| async {
+                let value = self.config.server.avatar.as_deref()?;
+                // Checked when the config was loaded, so a parse error cannot happen here.
+                let source = AvatarSource::parse(value).ok()?;
+                avatar::load_or_warn(&source).await
+            })
+            .await
+            .as_ref()
+    }
+
     /// After every login: joins the configured channel, then the history module listens to its
     /// channels and shows its notice (spec 04, FR-4.4, FR-4.17).
     async fn settle(&self, bot: &Bot) -> Result<()> {
         if let Some(channel) = &self.config.server.channel {
             bot.join(channel).await?;
+        }
+        if let Some(texture) = self.avatar().await {
+            bot.set_avatar(texture.clone())?;
         }
         if let Some(history) = &self.config.history
             && self.config.modules.enabled.contains(&Module::History)

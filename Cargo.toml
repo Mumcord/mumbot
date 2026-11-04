@@ -42,6 +42,9 @@ webpki-roots = "1"
 # History module: the recorded messages in one local file, like Mumcord's own store. Bundled,
 # so the static musl builds need no system SQLite.
 rusqlite = { version = "0.41", features = ["bundled"] }
+# Avatar: base64 config values, and decoding/scaling the image to Mumble's texture limits.
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
 [features]
 # The scripted test bot (test subcommands, voice, samples, checks, load generator). Off by

@@ -12,6 +12,7 @@ All notable changes to Mumbot are listed here. The format follows
 
 ### Added
 
+- `server.avatar` sets the bot's avatar from an `https` image URL or a base64 string (Mumcord issue #460). The bot loads it once at startup, checks that it is a real PNG or JPEG, scales it to Mumble's 600 x 60 pixel limit and sets it as its user texture, so every client shows it. If loading fails, it logs a warning and runs without an avatar until the next start. See `docs/configuration.md`.
 - The peer module announces which uses the relay allows (images, files, screen sharing) and its broadcast viewer limit to clients.
 - Token requests carry the use they are for; the bot passes it to the relay and answers `use-not-allowed` when the relay has switched that use off. A request without a use counts as screen sharing.
 - Screen-share broadcasts: the peer module creates a relay broadcast when a Mumcord sharer asks for one (`bcast-req`), admits the viewers the sharer lets in (`bcast-admit`) after checking that both use Mumcord with screen sharing, have a certificate, may use the relay and are in the same channel, and removes viewers on `bcast-kick`. A viewer who leaves or moves to another channel is removed at the relay, and a broadcast ends when its sharer leaves.
