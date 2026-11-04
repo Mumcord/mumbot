@@ -13,6 +13,8 @@
 //!   cargo test --features tester --test peer_broadcast_live -- --ignored --test-threads=1
 //! ```
 //!
+//! For cameras (Mumcord spec 08) run it once more with `MUMPEER_PROFILE=no-camera`.
+//!
 //! Each test checks the relay's status and skips itself when the running profile is not its own,
 //! so both profiles are covered by running the suite once per profile. Three test bots play
 //! Mumcord clients (hello with `p2p` and `screen-share`); the test also calls the relay API
@@ -96,6 +98,14 @@ fn client(dir: &Path, name: &str) -> BotConfig {
 }
 
 fn peer_config(dir: &Path, name: &str) -> Arc<WebhookConfig> {
+    peer_config_with(
+        dir,
+        name,
+        PeerConfig::new(api_url()).max_cameras_per_channel,
+    )
+}
+
+fn peer_config_with(dir: &Path, name: &str, max_cameras_per_channel: usize) -> Arc<WebhookConfig> {
     let secret_file = dir.join("relay.secret");
     std::fs::write(&secret_file, format!("{}\n", api_secret())).expect("secret");
     #[cfg(unix)]
@@ -121,6 +131,7 @@ fn peer_config(dir: &Path, name: &str) -> Arc<WebhookConfig> {
         tokens: Vec::new(),
         peer: Some(PeerConfig {
             api_secret_file: Some(secret_file),
+            max_cameras_per_channel,
             ..PeerConfig::new(api_url())
         }),
         history: None,
@@ -172,8 +183,13 @@ impl Client {
 
     /// Hello with `p2p` and `screen-share`, answered by the relay announcement.
     async fn greet(&mut self, bot: u32) -> serde_json::Value {
-        let hello = r#"{"app":"mumcord","v":1,"features":["p2p","screen-share"]}"#;
-        self.send(bot, "mumcord.hello", hello.to_owned());
+        self.greet_with(bot, r#""p2p","screen-share""#).await
+    }
+
+    /// Hello with the given features (a JSON list without brackets).
+    async fn greet_with(&mut self, bot: u32, features: &str) -> serde_json::Value {
+        let hello = format!(r#"{{"app":"mumcord","v":1,"features":[{features}]}}"#);
+        self.send(bot, "mumcord.hello", hello);
         let relay = self.next(bot).await;
         assert_eq!(relay["t"], "relay");
         relay
@@ -195,6 +211,11 @@ impl Client {
         .await
         .expect("peer message within 10 s")
     }
+}
+
+fn cam_req(sharer: &Client, bot: u32) {
+    let message = format!(r#"{{"v":1,"t":"bcast-req","rid":"{RID}","max":25,"k":"cam"}}"#);
+    sharer.send(bot, "mumcord.peer", message);
 }
 
 fn bcast_req(sharer: &Client, bot: u32, max: u16) {
@@ -384,6 +405,142 @@ async fn without_broadcasts_at_the_relay_the_sharer_gets_relay_full() {
     assert_eq!(
         alice.next(bot).await,
         serde_json::json!({"v":1,"t":"bcast-err","rid":RID,"r":"relay-full"})
+    );
+    running.abort();
+    alice.bot.disconnect().await.expect("alice leaves");
+}
+
+/// Whether the running relay allows camera broadcasts (profile `all`, not `no-camera`).
+async fn relay_cameras() -> Option<bool> {
+    let status = relay().status().await.expect("mumpeer testenv is up");
+    status.broadcast?;
+    Some(
+        status
+            .uses
+            .is_none_or(|uses| uses.iter().any(|u| u == "camera")),
+    )
+}
+
+#[tokio::test]
+#[ignore = "needs the mumpeer testenv and MUMBOT_LIVE=1 MUMBOT_PEER_RELAY=1"]
+async fn a_camera_runs_beside_a_screen_share_and_ends_on_a_channel_change() {
+    if !live() {
+        return;
+    }
+    if relay_cameras().await != Some(true) {
+        eprintln!("skipped: the relay runs without camera broadcasts");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let bot_name = unique("peerbot");
+    let room = ROOM.to_owned();
+    let admin = Bot::connect(BotConfig::superuser(env::test_port()))
+        .await
+        .expect("SuperUser (SUPERUSER_PASSWORD in <mumpeer>/testenv/.env)");
+    create_room(&admin, &room).await;
+    let mut alice = Client::connect(dir.path(), "alice").await;
+    let mut bob = Client::connect(dir.path(), "bob").await;
+    let running = tokio::spawn(modules::run(
+        peer_config_with(dir.path(), &bot_name, 1),
+        VoiceSettings::default(),
+    ));
+    let bot = alice
+        .bot
+        .wait_user(&bot_name, &UserCheck::default())
+        .await
+        .expect("the peer bot logs in")
+        .session;
+    let features = r#""p2p","screen-share","camera""#;
+    for client in [&mut alice, &mut bob] {
+        let relay = client.greet_with(bot, features).await;
+        let uses = relay["u"].as_array().cloned().unwrap_or_default();
+        assert!(
+            relay.get("u").is_none() || uses.contains(&"cam".into()),
+            "cameras are announced: {relay}"
+        );
+    }
+
+    // Alice shares her screen and her camera at the same time.
+    bcast_req(&alice, bot, 25);
+    let screen = alice.next(bot).await;
+    assert_eq!(screen["t"], "bcast", "{screen}");
+    cam_req(&alice, bot);
+    let camera = alice.next(bot).await;
+    assert_eq!(camera["t"], "bcast", "{camera}");
+    assert_ne!(screen["id"], camera["id"]);
+    let screen_id = broadcast_id(screen["id"].as_str().expect("id"));
+    let camera_text = camera["id"].as_str().expect("id").to_owned();
+    let camera_id = broadcast_id(&camera_text);
+
+    // The room holds one camera in this test, so Bob's is refused before the relay is asked.
+    cam_req(&bob, bot);
+    assert_eq!(
+        bob.next(bot).await,
+        serde_json::json!({"v":1,"t":"bcast-err","rid":RID,"r":"room-full"})
+    );
+
+    // Bob watches the camera.
+    admit(&alice, bot, &camera_text, bob.session());
+    assert_eq!(bob.next(bot).await["t"], "bcast-tok");
+
+    // Alice changes channel: her camera ends at the relay, her screen share keeps running.
+    alice.bot.join(&room).await.expect("alice moves away");
+    let probe = "d".repeat(40);
+    wait_admit(camera_id, &probe, |answer| {
+        matches!(answer, Err(BroadcastError::Gone))
+    })
+    .await;
+    relay()
+        .admit_viewer(screen_id, &probe)
+        .await
+        .expect("the screen share still runs");
+
+    // The room is free again for Bob.
+    cam_req(&bob, bot);
+    assert_eq!(bob.next(bot).await["t"], "bcast");
+
+    let certs = [alice.cert(), bob.cert(), probe];
+    running.abort();
+    alice.bot.disconnect().await.expect("alice leaves");
+    bob.bot.disconnect().await.expect("bob leaves");
+    admin.disconnect().await.expect("admin leaves");
+    for cert in certs {
+        relay().remove_peer(&cert).await.expect("clean up");
+    }
+}
+
+#[tokio::test]
+#[ignore = "needs the mumpeer testenv and MUMBOT_LIVE=1 MUMBOT_PEER_RELAY=1"]
+async fn a_relay_without_cameras_answers_use_not_allowed() {
+    if !live() {
+        return;
+    }
+    if relay_cameras().await != Some(false) {
+        eprintln!("skipped: the relay allows camera broadcasts or none at all");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let bot_name = unique("peerbot");
+    let mut alice = Client::connect(dir.path(), "alice").await;
+    let running = tokio::spawn(modules::run(
+        peer_config(dir.path(), &bot_name),
+        VoiceSettings::default(),
+    ));
+    let bot = alice
+        .bot
+        .wait_user(&bot_name, &UserCheck::default())
+        .await
+        .expect("the peer bot logs in")
+        .session;
+    let relay = alice
+        .greet_with(bot, r#""p2p","screen-share","camera""#)
+        .await;
+    let uses = relay["u"].as_array().cloned().unwrap_or_default();
+    assert!(!uses.contains(&"cam".into()), "{relay}");
+    cam_req(&alice, bot);
+    assert_eq!(
+        alice.next(bot).await,
+        serde_json::json!({"v":1,"t":"bcast-err","rid":RID,"r":"use-not-allowed"})
     );
     running.abort();
     alice.bot.disconnect().await.expect("alice leaves");
