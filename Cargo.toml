@@ -42,6 +42,11 @@ webpki-roots = "1"
 # History module: the recorded messages in one local file, like Mumcord's own store. Bundled,
 # so the static musl builds need no system SQLite.
 rusqlite = { version = "0.41", features = ["bundled"] }
+# Avatar (Mumcord issue #460): the image is decoded by content and re-encoded for the server's
+# image limit, with the same codecs Mumcord uses for its own avatars; the four decoders only, no
+# extra format support. Base64 for the inline config setting.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+base64 = "0.23"
 
 [features]
 # The scripted test bot (test subcommands, voice, samples, checks, load generator). Off by

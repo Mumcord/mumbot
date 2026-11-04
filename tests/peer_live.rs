@@ -153,6 +153,7 @@ fn peer_config(dir: &Path, name: &str, relay_url: &str, pin: String) -> Arc<Webh
             .expect("chmod");
     }
     Arc::new(WebhookConfig {
+        bot: Default::default(),
         modules: ModulesConfig {
             enabled: vec![Module::Peer],
         },
@@ -652,6 +653,7 @@ async fn group_members_get_tokens_and_a_lost_membership_is_revoked() {
 
     let base = peer_config(dir.path(), &bot_name, &relay_url, server_pin());
     let config = Arc::new(WebhookConfig {
+        bot: Default::default(),
         peer: Some(PeerConfig {
             allowed_groups: vec!["Relay".to_owned()],
             group_channel: channel.to_owned(),
@@ -720,6 +722,7 @@ async fn group_access_without_the_write_permission_refuses_to_start() {
     let (relay_url, _) = mock_relay().await;
     let base = peer_config(dir.path(), &unique("peerbot"), &relay_url, server_pin());
     let config = Arc::new(WebhookConfig {
+        bot: Default::default(),
         peer: Some(PeerConfig {
             allowed_groups: vec!["Relay".to_owned()],
             ..base.peer.as_ref().expect("peer").clone()

@@ -68,6 +68,7 @@ fn config(
     music.bitrate = Some(MUSIC_BITRATE);
     music.keys = vec![key("Lobby")];
     WebhookConfig {
+        bot: Default::default(),
         modules: ModulesConfig {
             enabled: vec![Module::Music, Module::Webhook],
         },

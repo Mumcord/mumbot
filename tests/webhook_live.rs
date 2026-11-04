@@ -42,6 +42,7 @@ fn rand_suffix() -> u32 {
 /// Bot under test: key `ci` may write to Lobby only, listener on loopback.
 fn config(dir: &std::path::Path, name: &str) -> Arc<WebhookConfig> {
     Arc::new(WebhookConfig {
+        bot: Default::default(),
         modules: Default::default(),
         server: ServerConfig {
             host: env::HOST.to_owned(),
@@ -126,7 +127,7 @@ async fn webhook_messages_reach_the_channel_chat() {
     let bot_name = unique("webhook-bot");
     let observer_name = unique("observer");
 
-    let api = Arc::new(BotApi::new(config(dir.path(), &bot_name)));
+    let api = Arc::new(BotApi::new(config(dir.path(), &bot_name), None));
     api.connect().await.expect("bot connects");
     assert!(api.connected().await, "AC-1.1 connected as a normal client");
 

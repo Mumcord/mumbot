@@ -11,6 +11,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+use crate::avatar;
 use crate::hello;
 use crate::history::{self, store::Store};
 use crate::music::{self, Player};
@@ -121,7 +122,16 @@ pub async fn run(config: Arc<WebhookConfig>, music_voice: VoiceSettings) -> Resu
         _ => None,
     };
 
-    let api = Arc::new(BotApi::new(Arc::clone(&config)));
+    // The avatar is read once at startup; a problem is one warning and the bot runs without it
+    // (Mumcord issue #460).
+    let avatar = match avatar::prepare(&config.bot).await {
+        Ok(avatar) => avatar,
+        Err(error) => {
+            tracing::warn!(%error, "avatar: starting without it");
+            None
+        }
+    };
+    let api = Arc::new(BotApi::new(Arc::clone(&config), avatar));
     // Subscribed before the login: Mumcord clients greet a joining bot right away, and the
     // history module must see everyone arrive.
     let events = api.subscribe();

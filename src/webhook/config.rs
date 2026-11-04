@@ -11,6 +11,7 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
 use crate::Module;
+use crate::avatar::AvatarConfig;
 use crate::history::HistoryConfig;
 use crate::music::MusicConfig;
 use crate::peer::PeerConfig;
@@ -31,6 +32,9 @@ pub struct WebhookConfig {
     pub modules: ModulesConfig,
     #[serde(default)]
     pub server: ServerConfig,
+    /// The bot's own settings, as the `[bot]` section (Mumcord issue #460).
+    #[serde(default)]
+    pub bot: AvatarConfig,
     #[serde(default)]
     pub http: HttpConfig,
     #[serde(default)]
@@ -161,6 +165,7 @@ impl WebhookConfig {
         if !chosen.is_empty() {
             config.modules.enabled = chosen.to_vec();
         }
+        config.bot.validate()?;
         config.voice.validate(" in [voice]")?;
         config.validate_modules()?;
         Ok(config)
@@ -555,6 +560,32 @@ channels = ["Lobby"]
 
     fn both() -> WebhookConfig {
         toml::from_str(&BOTH.replace("PIN", &"ab".repeat(32))).expect("config")
+    }
+
+    #[test]
+    fn the_bot_section_is_read_and_checked_at_load() {
+        let text = format!("[bot]\navatar_url = \"https://example.org/a.png\"\n{BOTH}",);
+        let config = toml::from_str::<WebhookConfig>(&text).expect("config");
+        assert_eq!(config.bot.avatar_base64, None);
+        assert_eq!(
+            config.bot.avatar_url.as_deref(),
+            Some("https://example.org/a.png")
+        );
+        assert!(config.bot.validate().is_ok(), "one source is enough");
+
+        let text = format!(
+            "[bot]\navatar_url = \"https://example.org/a.png\"\navatar_base64 = \"aGVsbG8=\"\n{BOTH}"
+        );
+        assert!(
+            toml::from_str::<WebhookConfig>(&format!("[bot]\navatar = \"x\"\n{BOTH}")).is_err(),
+            "a typo in [bot]"
+        );
+        let path =
+            std::env::temp_dir().join(format!("mumbot-avatar-{}-{}.toml", std::process::id(), 1));
+        std::fs::write(&path, text).expect("write");
+        let error = WebhookConfig::load(&path, &[Module::Webhook]).expect_err("both are set");
+        std::fs::remove_file(&path).ok();
+        assert!(format!("{error:#}").contains("only one"), "{error:#}");
     }
 
     #[test]

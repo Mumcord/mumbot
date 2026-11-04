@@ -105,6 +105,7 @@ fn peer_config(dir: &Path, name: &str) -> Arc<WebhookConfig> {
             .expect("chmod");
     }
     Arc::new(WebhookConfig {
+        bot: Default::default(),
         modules: ModulesConfig {
             enabled: vec![Module::Peer],
         },

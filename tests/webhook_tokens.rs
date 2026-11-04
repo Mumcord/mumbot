@@ -47,6 +47,7 @@ fn config(
     with_password: bool,
 ) -> Arc<WebhookConfig> {
     Arc::new(WebhookConfig {
+        bot: Default::default(),
         modules: Default::default(),
         server: ServerConfig {
             host: env::HOST.to_owned(),
@@ -127,7 +128,10 @@ async fn the_bot_uses_the_configured_channel_password() {
     admin.require_token(&room, PASSWORD).await.expect("ACL");
 
     // The bot with the password in its config: it joins the locked channel and can write.
-    let api = Arc::new(BotApi::new(config(dir.path(), &with_password, &room, true)));
+    let api = Arc::new(BotApi::new(
+        config(dir.path(), &with_password, &room, true),
+        None,
+    ));
     api.connect()
         .await
         .expect("login and join with the password");
@@ -177,12 +181,10 @@ async fn the_bot_uses_the_configured_channel_password() {
         .expect("the message reached the locked channel");
 
     // A bot without the password stays outside: join is refused, so nothing is written.
-    let locked_out = Arc::new(BotApi::new(config(
-        dir.path(),
-        &without_password,
-        &room,
-        false,
-    )));
+    let locked_out = Arc::new(BotApi::new(
+        config(dir.path(), &without_password, &room, false),
+        None,
+    ));
     let error = locked_out.connect().await;
     println!("join without password -> {error:?}");
     assert!(

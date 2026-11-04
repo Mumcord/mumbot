@@ -58,6 +58,7 @@ fn client(dir: &Path, name: &str) -> BotConfig {
 
 fn plugins_config(dir: &Path, name: &str) -> WebhookConfig {
     WebhookConfig {
+        bot: Default::default(),
         modules: ModulesConfig {
             enabled: vec![Module::Plugins],
         },

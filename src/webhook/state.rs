@@ -7,6 +7,7 @@ use anyhow::Result;
 use mumcord_protocol::{DenyKind, Event, Handle, ServerState, TextTarget, permissions};
 use tokio::sync::{Mutex, broadcast};
 
+use crate::avatar::Avatar;
 use crate::bot::BROADCAST_CAPACITY;
 use crate::checks::resolve_channel;
 use crate::hello;
@@ -26,16 +27,19 @@ const RECONNECT_DELAY: Duration = Duration::from_secs(2);
 pub struct BotApi {
     bot: Arc<Mutex<Option<Bot>>>,
     config: Arc<WebhookConfig>,
+    /// The prepared avatar, sent after every login (Mumcord issue #460).
+    avatar: Option<Avatar>,
     started: Instant,
     /// Outlives reconnects, so a subscriber keeps one stream across them.
     events: broadcast::Sender<Event>,
 }
 
 impl BotApi {
-    pub fn new(config: Arc<WebhookConfig>) -> Self {
+    pub fn new(config: Arc<WebhookConfig>, avatar: Option<Avatar>) -> Self {
         Self {
             bot: Arc::new(Mutex::new(None)),
             config,
+            avatar,
             started: Instant::now(),
             events: broadcast::channel(BROADCAST_CAPACITY).0,
         }
@@ -65,9 +69,12 @@ impl BotApi {
         self.settle(bot).await
     }
 
-    /// After every login: joins the configured channel, then the history module listens to its
-    /// channels and shows its notice (spec 04, FR-4.4, FR-4.17).
+    /// After every login: the avatar, then the configured channel, then the history module listens
+    /// to its channels and shows its notice (spec 04, FR-4.4, FR-4.17, Mumcord issue #460).
     async fn settle(&self, bot: &Bot) -> Result<()> {
+        if let Some(avatar) = &self.avatar {
+            avatar.apply(bot, self.config.delivery_timeout()).await;
+        }
         if let Some(channel) = &self.config.server.channel {
             bot.join(channel).await?;
         }

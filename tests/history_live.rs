@@ -52,6 +52,7 @@ fn client(dir: &Path, name: &str) -> BotConfig {
 
 fn history_config(dir: &Path, name: &str) -> Arc<WebhookConfig> {
     Arc::new(WebhookConfig {
+        bot: Default::default(),
         modules: ModulesConfig {
             enabled: vec![Module::History],
         },
