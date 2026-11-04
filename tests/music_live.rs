@@ -317,9 +317,15 @@ async fn the_bot_answers_a_mumcord_hello_with_its_own() -> Result<()> {
             "app": "mumcord",
             "v": 1,
             "features": [],
-            "bot": {"name": "mumbot", "version": env!("CARGO_PKG_VERSION"), "modules": ["webhook", "music"]},
+            "bot": {
+                "name": "mumbot",
+                "product": "Mumbot",
+                "version": env!("CARGO_PKG_VERSION"),
+                "modules": ["webhook", "music"],
+                "voice": true,
+            },
         })),
-        "the bot says it is mumbot and which modules it runs"
+        "the bot says it is mumbot, which modules it runs and that it uses voice"
     );
     let greeted = Instant::now();
     assert_eq!(
