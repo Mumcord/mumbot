@@ -17,14 +17,47 @@ Rules that apply to the whole file:
 
 - An unknown key or section is an error, so a typo is reported at startup instead of ignored.
 - The file is read once at startup. After a change, restart the bot.
-- Config values do not expand environment variables. Only the connect password has an
-  environment fallback (`SERVER_PASSWORD`, see `server.password`).
+- Config values do not expand environment variables. A few keys have their own environment variable
+  (the table at the end); those win over the file. The connect password falls back to
+  `SERVER_PASSWORD` (see `server.password`).
 
 ## `[modules]`: which modules `mumbot run` starts (optional)
 
 | Key | Type | Default | Env | Meaning |
 | --- | --- | --- | --- | --- |
 | `enabled` | list of `"webhook"`, `"peer"`, `"history"`, `"music"`, `"plugins"` | `[]` | `MUMBOT_MODULES` (comma-separated, via `--modules`) | Modules for `mumbot run`. `--modules`, `MUMBOT_MODULES`, `mumbot webhook`, `mumbot peer`, `mumbot history`, `mumbot music` and `mumbot plugins` replace it. Only the sections of the chosen modules are checked. |
+
+## `[bot]`: the bot's own settings (optional)
+
+| Key | Type | Default | Environment | Meaning |
+| --- | --- | --- | --- | --- |
+| `avatar_url` | image URL (https only) | none | `MUMBOT_AVATAR_URL` | The bot's avatar. Fetched once at startup, at most 5 MB within 10 s, and never again while running: a new image needs a restart. Redirects are followed, but only to https. |
+| `avatar_base64` | image as base64 | none | `MUMBOT_AVATAR_BASE64` | The same image inline (PNG, JPEG, GIF or WebP). Set only one of the two: both are a config error at startup. |
+
+The environment variables win over the file, as `MUMBOT_PEER_API_SECRET` does, and an empty value
+counts as unset.
+
+What the bot does with the image:
+
+- It is checked by content, not by file name or `Content-Type`, and its dimensions are refused
+  before decoding (at most 4000 pixels per edge).
+- It is always re-encoded, never passed through: scaled to at most 128×128 and written as PNG; if
+  that is bigger than the server's limit, JPEG at falling quality (85, 70, 50). The limit is the
+  server's `imagemessagelength`; when the server sends 0 or nothing, 128 KiB is used.
+- It is sent as the bot's standard Mumble user texture right after login and after every
+  reconnect, so Mumcord and any standard client show it. Nothing is needed on the server side.
+
+A missing setting is not reported at all. Any problem (bad URL, failed download, content that is not
+one of the four formats, an image that cannot fit the server's limit, a server that refuses it) is
+one warning with the reason, and the bot connects without an avatar: an avatar never stops the bot.
+
+```toml
+[bot]
+# Either a URL (https only) ...
+avatar_url = "https://example.org/night-owls-relay.png"
+# ... or the image inline as base64. Set only one of the two.
+# avatar_base64 = "iVBORw0KGgoAAAANSUhEUgAA..."
+```
 
 ## `[server]`: the Mumble server and the bot's identity
 
@@ -183,6 +216,8 @@ server's bandwidth limit`). It never sends above the limit, and never below 6000
 | --- | --- | --- |
 | `MUMBOT_CONFIG` | modules | Config file path when `--config` is not given. The Docker image sets `/config/bot.toml`. |
 | `MUMBOT_MODULES` | modules | Modules for `mumbot run`, comma-separated (`webhook,peer,music`); replaces `[modules] enabled`. |
+| `MUMBOT_AVATAR_URL` | modules | Avatar URL; wins over `bot.avatar_url`. See `[bot]`. |
+| `MUMBOT_AVATAR_BASE64` | modules | Avatar as base64; wins over `bot.avatar_base64`. See `[bot]`. |
 | `MUMBOT_DATA` | both | Certificate folder. The Docker image sets `/data`. |
 | `MUMCORD_BOT_DATA` | both | Older name of `MUMBOT_DATA`, still honoured when that is unset. |
 | `XDG_DATA_HOME` | both | Base of the default certificate folder (`$XDG_DATA_HOME/mumbot`). |
@@ -224,6 +259,11 @@ channels = [42]
 [[token]]
 channel = "Releases"
 password = "REPLACE-WITH-THE-CHANNEL-PASSWORD"
+
+[bot]
+# The bot's avatar in Mumcord and in the standard clients: a URL (https only) or base64, never both.
+# Read once at startup, so a new image needs a restart.
+avatar_url = "https://example.org/build-bot.png"
 ```
 
 The connect password comes from `SERVER_PASSWORD` in the environment.

@@ -16,6 +16,14 @@ key = "REPLACE-WITH-A-LONG-RANDOM-KEY"
 label = "example"
 channels = ["Lobby"]
 
+# The bot's avatar in Mumcord and in the standard clients: a URL (https only) or base64, never both.
+# Read once at startup, so a new image needs a restart. PNG, JPEG, GIF or WebP; the bot scales it to
+# 128x128 and re-encodes it to fit the server's image limit. Without either key the bot has no avatar.
+# [bot]
+# avatar_url = "https://example.org/mumbot.png"
+# avatar_base64 = "iVBORw0KGgoAAAANSUhEUgAA..."
+# Or in the environment: MUMBOT_AVATAR_URL, MUMBOT_AVATAR_BASE64.
+
 # One block per channel password. The bot presents it at login.
 # [[token]]
 # channel = "Secret"
