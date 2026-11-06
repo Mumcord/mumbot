@@ -6,6 +6,8 @@ All notable changes to Mumbot are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-06
+
 ### Added
 
 - Example [`examples/webhook-and-history/`](examples/webhook-and-history/): two modules in one bot (`command: ["run"]`), so the config's `[modules]` list decides what runs.
