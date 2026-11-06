@@ -51,7 +51,13 @@ enabled = ["webhook", "peer"]
 
 Existing webhook setups need no change: `[modules]` is optional and the Docker image still runs
 `webhook` by default. To run several modules in Docker, set the command to `run` and list the
-modules in `[modules]` or in `MUMBOT_MODULES`.
+modules in `[modules]` or in `MUMBOT_MODULES` (a ready-made setup:
+[`examples/webhook-and-history/`](../examples/webhook-and-history/)).
+
+Because that default command is a single-module command, it replaces the config's `[modules]`
+list. Mumbot logs a warning when a list is dropped that way, so a container that runs only
+`webhook` despite `enabled = ["webhook", "history"]` says why. An empty `MUMBOT_MODULES`
+(a Compose file's `MUMBOT_MODULES: ${MUMBOT_MODULES:-}`) counts as unset, so the config decides.
 
 The image's health check asks the webhook module's `/health` on port 8080; when the webhook
 module does not run, disable it (as [`examples/history/`](../examples/history/) does) or replace it

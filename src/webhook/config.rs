@@ -67,6 +67,17 @@ pub struct ModulesConfig {
     pub enabled: Vec<Module>,
 }
 
+/// How the command line chose the modules to run; both forms replace the config's
+/// `[modules] enabled` list (`docs/modules.md`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModuleChoice {
+    /// A single-module subcommand (`mumbot webhook`, `mumbot history`, ...). The Docker image
+    /// starts `mumbot webhook` by default, so this choice is often nobody's explicit choice.
+    Subcommand(Module),
+    /// `mumbot run`'s `--modules` or `MUMBOT_MODULES`; empty means the config file decides.
+    List(Vec<Module>),
+}
+
 #[derive(Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelToken {
@@ -158,19 +169,42 @@ impl std::fmt::Debug for ApiKey {
 }
 
 impl WebhookConfig {
-    /// Reads a TOML config file, replaces its module list with `chosen` unless that is empty,
-    /// and validates it for the modules that will run.
-    pub fn load(path: &Path, chosen: &[Module]) -> Result<Self> {
+    /// Reads a TOML config file, applies the command line's module choice and validates it for
+    /// the modules that will run.
+    pub fn load(path: &Path, choice: ModuleChoice) -> Result<Self> {
         let mut config = Self::read(path)?;
-        if !chosen.is_empty() {
-            config.modules.enabled = chosen.to_vec();
-        }
+        config.apply_choice(choice);
         config.voice.validate(" in [voice]")?;
         config.validate_modules()?;
         if let Some(avatar) = &config.server.avatar {
             AvatarSource::parse(avatar).context("server.avatar")?;
         }
         Ok(config)
+    }
+
+    /// The command line wins over the config file. When a single-module subcommand drops a
+    /// `[modules]` list, say so: in Docker the image's default command is `webhook`, so a list
+    /// in the config file would otherwise vanish without a trace.
+    fn apply_choice(&mut self, choice: ModuleChoice) {
+        let configured = std::mem::take(&mut self.modules.enabled);
+        match choice {
+            ModuleChoice::Subcommand(module) => {
+                if configured.iter().any(|other| *other != module) {
+                    tracing::warn!(
+                        running = ?module,
+                        configured = ?configured,
+                        "this subcommand runs that module only and ignores the config's \
+                         [modules] enabled list; set the container command to `run` to run \
+                         several modules together"
+                    );
+                }
+                self.modules.enabled = vec![module];
+            }
+            ModuleChoice::List(chosen) if !chosen.is_empty() => {
+                self.modules.enabled = chosen;
+            }
+            ModuleChoice::List(_) => self.modules.enabled = configured,
+        }
     }
 
     fn read(path: &Path) -> Result<Self> {
@@ -581,7 +615,8 @@ channels = ["Lobby"]
 
         let path = std::env::temp_dir().join(format!("mumbot-voice-{}.toml", std::process::id()));
         std::fs::write(&path, text.replace("64000", "5")).expect("write");
-        let error = WebhookConfig::load(&path, &[Module::Webhook]).expect_err("out of range");
+        let error = WebhookConfig::load(&path, ModuleChoice::List(vec![Module::Webhook]))
+            .expect_err("out of range");
         std::fs::remove_file(&path).ok();
         assert!(format!("{error:#}").contains("out of range"), "{error:#}");
     }
@@ -679,10 +714,25 @@ channels = ["Lobby"]
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("bot.toml");
         std::fs::write(&path, BOTH.replace("PIN", &"ab".repeat(32))).expect("write");
-        let config = WebhookConfig::load(&path, &[Module::Peer]).expect("load");
+        let config =
+            WebhookConfig::load(&path, ModuleChoice::List(vec![Module::Peer])).expect("load");
         assert_eq!(config.modules.enabled, [Module::Peer]);
-        let config = WebhookConfig::load(&path, &[]).expect("load");
+        let config = WebhookConfig::load(&path, ModuleChoice::List(Vec::new())).expect("load");
         assert_eq!(config.modules.enabled, [Module::Webhook, Module::Peer]);
+    }
+
+    #[test]
+    fn a_single_module_subcommand_overrides_the_config_list() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("bot.toml");
+        std::fs::write(&path, BOTH.replace("PIN", &"ab".repeat(32))).expect("write");
+        let config =
+            WebhookConfig::load(&path, ModuleChoice::Subcommand(Module::Peer)).expect("load");
+        assert_eq!(
+            config.modules.enabled,
+            [Module::Peer],
+            "`mumbot peer` still runs one module"
+        );
     }
 
     #[test]

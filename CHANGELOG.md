@@ -6,6 +6,15 @@ All notable changes to Mumbot are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Example [`examples/webhook-and-history/`](examples/webhook-and-history/): two modules in one bot (`command: ["run"]`), so the config's `[modules]` list decides what runs.
+
+### Fixed
+
+- A container that lists several modules in `[modules] enabled` now says why only one of them runs: the image's default command (`webhook`) replaces the list, and mumbot logs a warning naming both. Set the command to `run` to run them together.
+- An empty `MUMBOT_MODULES` (a Compose file's `MUMBOT_MODULES: ${MUMBOT_MODULES:-}`) counts as unset instead of stopping `mumbot run` with "a value is required for '--modules'", so the config's `[modules]` list decides.
+
 ## [0.5.0] - 2026-11-06
 
 ### Security
