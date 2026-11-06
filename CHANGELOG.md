@@ -6,6 +6,8 @@ All notable changes to Mumbot are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-06
+
 ### Security
 
 - History module: the chat history of locked channels (a password or an ACL that restricts entering) is no longer given to people who only listen to the channel. Only people inside a locked channel get it, checked again before messages are sent. With channel passwords in the config, the bot also asks for Mumcord's password proof and answers only while the server confirms that its own password is still valid (Mumcord issue #382).
@@ -24,8 +26,7 @@ All notable changes to Mumbot are listed here. The format follows
 
 ### Changed
 
-- The peer module now builds against the unreleased Mumcord crates from Git until `mumcord-p2p` 0.7.0 is published.
-- `mumcord-protocol` updated to 0.6, which added the ACL query (`Event::Acl` and `Handle::query_acl`) that group access needs.
+- Updated the Mumcord crates (`mumcord-protocol`, `mumcord-codec`, `mumcord-p2p`) to 0.7, all from crates.io. Protocol 0.6 already added the ACL query (`Event::Acl` and `Handle::query_acl`) that group access needs.
 - `resolve_channel` takes `Root` alone as the root channel, whatever the server calls it.
 - Updated the MP3 decoder library (symphonia) to 0.6.
 
