@@ -94,6 +94,7 @@ fn state() -> ServerState {
 fn text(actor: u32, target: TextTarget, body: &str) -> TextMessage {
     TextMessage {
         actor: Some(actor),
+        sender: None,
         target,
         message: body.to_owned(),
     }

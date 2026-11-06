@@ -1197,7 +1197,7 @@ checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
 
 [[package]]
 name = "mumbot"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1207,7 +1207,7 @@ dependencies = [
  "image",
  "mumcord-codec",
  "mumcord-p2p",
- "mumcord-protocol 0.6.2",
+ "mumcord-protocol",
  "rcgen",
  "ring",
  "rtrb",
@@ -1227,9 +1227,9 @@ dependencies = [
 
 [[package]]
 name = "mumcord-codec"
-version = "0.5.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66a69a982adda6ef7138e3539d8cfaead1c2e7879d8688081e6010645af28261"
+checksum = "ef9f223a355979948f48314208264e7ef7eb411f435ce768fef52c2e964a4bb6"
 dependencies = [
  "nnnoiseless",
  "opus",
@@ -1241,13 +1241,14 @@ dependencies = [
 
 [[package]]
 name = "mumcord-p2p"
-version = "0.7.0-dev"
-source = "git+https://github.com/Mumcord/mumcord?rev=61f818b13424660a3340673569155f6e7a39a3be#61f818b13424660a3340673569155f6e7a39a3be"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ec7fdbcd6d1a8045970971055598e4ed03419976698c88e3ed07f8bad2f3770"
 dependencies = [
  "bytes",
  "crab_nat",
  "igd-next",
- "mumcord-protocol 0.7.0-dev",
+ "mumcord-protocol",
  "netdev",
  "quinn",
  "rand",
@@ -1264,30 +1265,9 @@ dependencies = [
 
 [[package]]
 name = "mumcord-protocol"
-version = "0.6.2"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c353b518aa45971594e92146d9935b108b6b41ec8d0586fbda766919047565c2"
-dependencies = [
- "aes",
- "base64 0.23.1",
- "bytes",
- "prost",
- "prost-build",
- "protoc-bin-vendored",
- "rand",
- "rustls",
- "sha1",
- "thiserror",
- "tokio",
- "tokio-rustls",
- "tracing",
- "x509-parser",
-]
-
-[[package]]
-name = "mumcord-protocol"
-version = "0.7.0-dev"
-source = "git+https://github.com/Mumcord/mumcord?rev=61f818b13424660a3340673569155f6e7a39a3be#61f818b13424660a3340673569155f6e7a39a3be"
+checksum = "7f2c1e4b0359c06e0bffd6ec763566b6aeec0a325f95274907168a290cd5dc8b"
 dependencies = [
  "aes",
  "base64 0.23.1",
