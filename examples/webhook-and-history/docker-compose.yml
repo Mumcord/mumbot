@@ -1,0 +1,48 @@
+# mumbot's webhook and history modules in one process, against a Mumble server you already run
+# (any standard server, 1.4+). Steps and checks: README.md next to this file.
+name: mumbot-webhook-and-history
+
+services:
+  mumbot:
+    image: ghcr.io/mumcord/mumbot:0.4.1
+    # `run` starts the modules of the config's [modules] enabled list on one connection, so
+    # both jobs are one bot user with one certificate. The image's default command is
+    # `webhook`, which runs that module only and ignores the list.
+    command: ["run"]
+    # The bot reconnects by itself after a dropped link; this restarts it after a crash, a
+    # reboot or a failed first login (for example while the server is still starting).
+    restart: unless-stopped
+    # The image's own non-root user; repeated here so the setup does not depend on the image.
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      MUMBOT_CONFIG: /config/bot.toml
+      # Connect password of the server, if it has one (kept out of bot.toml).
+      SERVER_PASSWORD: ${SERVER_PASSWORD:-}
+      # Empty counts as unset, so the config's [modules] list decides. Set it to override the
+      # list without editing bot.toml, for example "webhook,history".
+      MUMBOT_MODULES: ${MUMBOT_MODULES:-}
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      # Loopback only: the API key travels in clear text over plain HTTP. To serve other
+      # machines, put a TLS reverse proxy in front instead of opening this port.
+      - "127.0.0.1:${HTTP_PORT:-8080}:8080"
+    # Lets bot.toml use host = "host.docker.internal" when the server runs on this machine.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./bot.toml:/config/bot.toml:ro
+      # The bot's client certificate (its identity on the server) and the recorded history.
+      - mumbot-data:/data
+    healthcheck:
+      # The webhook module answers /health on 8080; the history module has no listener.
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/health | grep -q '\"connected\":true'"]
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+volumes:
+  mumbot-data:

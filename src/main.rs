@@ -17,9 +17,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use mumbot::voice_settings::{VoiceConfig, VoiceSettings};
-use mumbot::webhook::WebhookConfig;
+use mumbot::webhook::{ModuleChoice, WebhookConfig};
 use mumbot::{Bot, BotConfig, Module, env, hello, modules};
 
 #[derive(Parser, Debug)]
@@ -128,7 +128,8 @@ enum Command {
         #[arg(long, env = "MUMBOT_CONFIG")]
         config: PathBuf,
         /// Modules to run, comma-separated; replaces the config's `[modules] enabled` list.
-        #[arg(long, env = "MUMBOT_MODULES", value_delimiter = ',')]
+        /// Environment: MUMBOT_MODULES (an empty value counts as unset).
+        #[arg(long, value_delimiter = ',')]
         modules: Vec<Module>,
     },
     #[cfg(feature = "tester")]
@@ -157,13 +158,17 @@ fn tester_only(command: &str) -> String {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let (config, chosen) = match cli.command {
-        Command::Webhook { config } => (config, vec![Module::Webhook]),
-        Command::Peer { config } => (config, vec![Module::Peer]),
-        Command::Music { config } => (config, vec![Module::Music]),
-        Command::History { config } => (config, vec![Module::History]),
-        Command::Plugins { config } => (config, vec![Module::Plugins]),
-        Command::Run { config, modules } => (config, modules),
+    let (config_path, choice) = match cli.command {
+        Command::Webhook { config } => (config, ModuleChoice::Subcommand(Module::Webhook)),
+        Command::Peer { config } => (config, ModuleChoice::Subcommand(Module::Peer)),
+        Command::Music { config } => (config, ModuleChoice::Subcommand(Module::Music)),
+        Command::History { config } => (config, ModuleChoice::Subcommand(Module::History)),
+        Command::Plugins { config } => (config, ModuleChoice::Subcommand(Module::Plugins)),
+        Command::Run { config, modules } => {
+            let env = std::env::var("MUMBOT_MODULES").ok();
+            let chosen = chosen_modules(modules, env.as_deref())?;
+            (config, ModuleChoice::List(chosen))
+        }
         #[cfg(feature = "tester")]
         Command::Test(command) => {
             let hold = Duration::from_secs(cli.hold);
@@ -191,7 +196,7 @@ async fn main() -> Result<()> {
     // Only module runs are bots; the scripted test bot keeps the default release so it shows as
     // a regular Mumcord user (Mumcord issue #458).
     mumcord_protocol::set_client_release(hello::client_release());
-    let config = Arc::new(WebhookConfig::load(&config, &chosen)?);
+    let config = Arc::new(WebhookConfig::load(&config_path, choice)?);
     // Checked now so a bad value stops the start, not the first voice a module sends.
     let music = config.music.as_ref().map(|music| music.voice());
     let settings = voice_settings(&cli.voice, music, config.voice)?;
@@ -212,6 +217,31 @@ fn voice_settings(
 ) -> Result<VoiceSettings> {
     let env = VoiceConfig::from_env(|name| std::env::var(name).ok())?;
     VoiceSettings::resolve(args.layer(), env, module, voice)
+}
+
+/// `--modules` wins, else `MUMBOT_MODULES`. An empty or blank `MUMBOT_MODULES` counts as unset:
+/// a Compose file's `MUMBOT_MODULES: ${MUMBOT_MODULES:-}` must not stop the bot from starting.
+fn chosen_modules(flag: Vec<Module>, env: Option<&str>) -> Result<Vec<Module>> {
+    if !flag.is_empty() {
+        return Ok(flag);
+    }
+    let value = env.unwrap_or_default().trim();
+    if value.is_empty() {
+        return Ok(Vec::new());
+    }
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(|name| {
+            Module::from_str(name, true).map_err(|_| {
+                anyhow::anyhow!(
+                    "MUMBOT_MODULES: unknown module {name:?}; expected webhook, peer, music, \
+                     history or plugins"
+                )
+            })
+        })
+        .collect()
 }
 
 async fn connect(cli: Connection) -> Result<Bot> {
@@ -275,6 +305,27 @@ mod tests {
                 ]
         ));
         assert!(parse(&["run", "--config", "bot.toml", "--modules", "radio"]).is_err());
+    }
+
+    #[test]
+    fn modules_from_the_environment_are_optional() {
+        for value in [None, Some(""), Some("  "), Some(",")] {
+            assert_eq!(
+                chosen_modules(Vec::new(), value).expect("empty means the config decides"),
+                Vec::<Module>::new(),
+                "{value:?}"
+            );
+        }
+        assert_eq!(
+            chosen_modules(Vec::new(), Some("webhook, peer")).expect("two modules"),
+            [Module::Webhook, Module::Peer]
+        );
+        assert_eq!(
+            chosen_modules(vec![Module::History], Some("webhook")).expect("--modules wins"),
+            [Module::History]
+        );
+        let error = chosen_modules(Vec::new(), Some("radio")).expect_err("unknown module");
+        assert!(error.to_string().contains("MUMBOT_MODULES"), "{error}");
     }
 
     #[cfg(not(feature = "tester"))]

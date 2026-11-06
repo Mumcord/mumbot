@@ -286,6 +286,7 @@ More: [docs/security.md](docs/security.md).
 | [`peer-with-relay/`](examples/peer-with-relay/) | Try the peer bot with a mumpeer relay and a standard Mumble server. |
 | [`music/`](examples/music/) | Run the music bot against the Mumble server you already have. |
 | [`history/`](examples/history/) | Run the history bot against the Mumble server you already have. |
+| [`webhook-and-history/`](examples/webhook-and-history/) | Run two modules in one bot: post into channels and keep their chat history. |
 | [`ci-test-bot/`](examples/ci-test-bot/) | Test a Mumble client in CI against a throwaway server (tester image). |
 
 ## Releases and variants

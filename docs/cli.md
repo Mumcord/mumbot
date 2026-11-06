@@ -95,7 +95,7 @@ invalid, the bot user is not registered or the very first login fails. See [plug
 | Usage | Option | Meaning |
 | --- | --- | --- |
 | `mumbot run --config <CONFIG> [--modules <MODULES>]` | `--config <CONFIG>` (env `MUMBOT_CONFIG`) | TOML config file with the server settings and the sections of the chosen modules. |
-| | `--modules <MODULES>` (env `MUMBOT_MODULES`) | Comma-separated modules (`webhook`, `peer`, `history`, `music`, `plugins`); replaces `[modules] enabled` of the config. |
+| | `--modules <MODULES>` (env `MUMBOT_MODULES`) | Comma-separated modules (`webhook`, `peer`, `history`, `music`, `plugins`); replaces `[modules] enabled` of the config. An empty `MUMBOT_MODULES` counts as unset. |
 
 Logs in once and runs every chosen module on that connection. Runs until stopped, reconnects
 after a dropped link and exits non-zero when no module is chosen, the config is invalid for the

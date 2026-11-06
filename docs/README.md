@@ -32,6 +32,7 @@ certificate.
 | [`peer-with-relay/`](../examples/peer-with-relay/) | The peer bot with a mumpeer relay and a standard Mumble server. | Available (needs the released mumpeer relay image) |
 | [`music/`](../examples/music/) | The music bot against a Mumble server you already run, with a read-only media folder. | Available |
 | [`history/`](../examples/history/) | The history bot against a Mumble server you already run, with its database on a volume. | Available |
+| [`webhook-and-history/`](../examples/webhook-and-history/) | Two modules in one bot (`command: ["run"]`), so the config's `[modules]` list decides what runs. | Available |
 
 The examples use the pinned image `ghcr.io/mumcord/mumbot:0.4.1`; `ci-test-bot` uses the tester
 image `ghcr.io/mumcord/mumbot-tester` ([modules.md](modules.md#the-two-builds)). When you upgrade,

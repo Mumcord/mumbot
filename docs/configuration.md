@@ -24,7 +24,7 @@ Rules that apply to the whole file:
 
 | Key | Type | Default | Env | Meaning |
 | --- | --- | --- | --- | --- |
-| `enabled` | list of `"webhook"`, `"peer"`, `"history"`, `"music"`, `"plugins"` | `[]` | `MUMBOT_MODULES` (comma-separated, via `--modules`) | Modules for `mumbot run`. `--modules`, `MUMBOT_MODULES`, `mumbot webhook`, `mumbot peer`, `mumbot history`, `mumbot music` and `mumbot plugins` replace it. Only the sections of the chosen modules are checked. |
+| `enabled` | list of `"webhook"`, `"peer"`, `"history"`, `"music"`, `"plugins"` | `[]` | `MUMBOT_MODULES` (comma-separated, via `--modules`) | Modules for `mumbot run`. `--modules`, `MUMBOT_MODULES`, `mumbot webhook`, `mumbot peer`, `mumbot history`, `mumbot music` and `mumbot plugins` replace it; a warning names the dropped list when a single-module command replaces a longer one. Only the sections of the chosen modules are checked. |
 
 ## `[server]`: the Mumble server and the bot's identity
 
@@ -184,7 +184,7 @@ server's bandwidth limit`). It never sends above the limit, and never below 6000
 | Variable | Used by | Meaning |
 | --- | --- | --- |
 | `MUMBOT_CONFIG` | modules | Config file path when `--config` is not given. The Docker image sets `/config/bot.toml`. |
-| `MUMBOT_MODULES` | modules | Modules for `mumbot run`, comma-separated (`webhook,peer,music`); replaces `[modules] enabled`. |
+| `MUMBOT_MODULES` | modules | Modules for `mumbot run`, comma-separated (`webhook,peer,music`); replaces `[modules] enabled`. Empty counts as unset, so the config decides. |
 | `MUMBOT_DATA` | both | Certificate folder. The Docker image sets `/data`. |
 | `MUMCORD_BOT_DATA` | both | Older name of `MUMBOT_DATA`, still honoured when that is unset. |
 | `XDG_DATA_HOME` | both | Base of the default certificate folder (`$XDG_DATA_HOME/mumbot`). |
