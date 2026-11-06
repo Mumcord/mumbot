@@ -273,6 +273,7 @@ mod tests {
         let s = state();
         let msg = TextMessage {
             actor: Some(7),
+            sender: None,
             target: TextTarget::channel(1),
             message: "<b>hi</b>".to_owned(),
         };
