@@ -6,6 +6,14 @@ All notable changes to Mumbot are listed here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- The peer module refuses to start when its bot user is not registered, instead of announcing a
+  relay beneath its clients: Mumcord clients ignore relay announcements from anyone else, so those
+  setups showed "this server has no relay" (and with it "file transfer is not available") while the
+  bot logged a reachable relay. `docs/peer.md` now lists what else to check when a client reports
+  no relay (a changed bot or relay certificate, two announcing bots).
+
 ## [0.5.1] - 2026-11-06
 
 ### Added

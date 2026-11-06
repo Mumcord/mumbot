@@ -147,6 +147,20 @@ async fn relay_broadcasts() -> bool {
     status.broadcast.is_some()
 }
 
+/// Registers the announcer's user, which the modules bot then uses with the same data dir and
+/// name: Mumcord clients only accept a relay announcement from a registered user. `observer`
+/// waits until it forgot the announcer's session, so a later `wait_user` cannot match the
+/// announcer instead of the modules bot.
+async fn register_announcer(dir: &Path, name: &str, observer: &Bot) {
+    let bot = Bot::connect(client(dir, name)).await.expect("announcer");
+    bot.register().await.expect("announcer registers");
+    bot.disconnect().await.expect("announcer leaves");
+    observer
+        .wait_user_gone(name)
+        .await
+        .expect("the announcer left");
+}
+
 /// A Mumcord client played by a test bot.
 struct Client {
     bot: Bot,
@@ -297,6 +311,7 @@ async fn the_sharer_admits_and_removes_viewers_of_its_broadcast() {
     let mut alice = Client::connect(dir.path(), "alice").await;
     let mut bob = Client::connect(dir.path(), "bob").await;
     let mut carol = Client::connect(dir.path(), "carol").await;
+    register_announcer(dir.path(), &bot_name, &alice.bot).await;
     let running = tokio::spawn(modules::run(
         peer_config(dir.path(), &bot_name),
         VoiceSettings::default(),
@@ -386,6 +401,7 @@ async fn without_broadcasts_at_the_relay_the_sharer_gets_relay_full() {
     let dir = tempfile::tempdir().expect("tempdir");
     let bot_name = unique("peerbot");
     let mut alice = Client::connect(dir.path(), "alice").await;
+    register_announcer(dir.path(), &bot_name, &alice.bot).await;
     let running = tokio::spawn(modules::run(
         peer_config(dir.path(), &bot_name),
         VoiceSettings::default(),
@@ -440,6 +456,7 @@ async fn a_camera_runs_beside_a_screen_share_and_ends_on_a_channel_change() {
     create_room(&admin, &room).await;
     let mut alice = Client::connect(dir.path(), "alice").await;
     let mut bob = Client::connect(dir.path(), "bob").await;
+    register_announcer(dir.path(), &bot_name, &alice.bot).await;
     let running = tokio::spawn(modules::run(
         peer_config_with(dir.path(), &bot_name, 1),
         VoiceSettings::default(),
@@ -524,6 +541,7 @@ async fn a_relay_without_cameras_answers_use_not_allowed() {
     let dir = tempfile::tempdir().expect("tempdir");
     let bot_name = unique("peerbot");
     let mut alice = Client::connect(dir.path(), "alice").await;
+    register_announcer(dir.path(), &bot_name, &alice.bot).await;
     let running = tokio::spawn(modules::run(
         peer_config(dir.path(), &bot_name),
         VoiceSettings::default(),
@@ -572,6 +590,7 @@ async fn a_viewer_gets_the_tokens_of_a_screen_share_and_plugin_data_tagged_by_ki
     let bot_name = unique("peerbot");
     let mut alice = Client::connect(dir.path(), "alice").await;
     let mut bob = Client::connect(dir.path(), "bob").await;
+    register_announcer(dir.path(), &bot_name, &alice.bot).await;
     let running = tokio::spawn(modules::run(
         peer_config(dir.path(), &bot_name),
         VoiceSettings::default(),

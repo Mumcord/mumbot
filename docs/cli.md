@@ -61,8 +61,8 @@ invalid, the listener cannot bind or the very first login fails.
 | `mumbot peer --config <CONFIG>` | `--config <CONFIG>` (env `MUMBOT_CONFIG`) | TOML config file with the server settings, `server.server_cert_sha256` and the `[peer]` section ([configuration.md](configuration.md#peer-the-peer-bot)). |
 
 Runs until stopped, reconnects after a dropped link and exits non-zero only when the config or the
-API secret is invalid or the very first login fails (also when the server certificate does not
-match the pin).
+API secret is invalid, the bot user is not registered or the very first login fails (also when the
+server certificate does not match the pin).
 
 ## `music`
 
@@ -99,7 +99,8 @@ invalid, the bot user is not registered or the very first login fails. See [plug
 
 Logs in once and runs every chosen module on that connection. Runs until stopped, reconnects
 after a dropped link and exits non-zero when no module is chosen, the config is invalid for the
-chosen modules, the very first login fails or a module fails.
+chosen modules, the very first login fails, a module refuses to run (the plugins module without a
+registered bot user, the peer module as a guest) or a module fails.
 
 ## Connection and identity
 

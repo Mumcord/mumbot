@@ -156,6 +156,8 @@ fn short(hash: &str) -> &str {
 
 #[derive(Default)]
 struct MockLink {
+    /// Whether the bot's own user is registered; `None` while it counts as disconnected.
+    registered: Mutex<Option<bool>>,
     users: Mutex<Option<Users>>,
     sent: Mutex<Vec<(Vec<u32>, serde_json::Value)>>,
     /// What the mock answers an ACL query with, and the channels it was asked for.
@@ -197,6 +199,10 @@ fn group_rules(names: &[&str]) -> Rules {
 }
 
 impl Link for Arc<MockLink> {
+    async fn registered(&self) -> Option<bool> {
+        *self.registered.lock().expect("lock")
+    }
+
     async fn users(&self) -> Option<Users> {
         self.users.lock().expect("lock").clone()
     }
@@ -1162,6 +1168,21 @@ async fn the_bot_refuses_to_start_without_the_write_permission_or_an_unknown_gro
         ("Mods", &[BOB_ID]),
     ])));
     s.peer.check_access().await.expect("groups readable");
+}
+
+#[tokio::test]
+async fn the_bot_refuses_to_run_until_its_own_user_is_registered() {
+    let link = Arc::new(MockLink::default());
+    *link.registered.lock().expect("lock") = Some(false);
+    let error = check_registered(&link)
+        .await
+        .expect_err("Mumcord ignores announcements of unregistered users");
+    assert!(error.to_string().contains("registered"), "{error}");
+
+    *link.registered.lock().expect("lock") = Some(true);
+    check_registered(&link)
+        .await
+        .expect("registered bots may run");
 }
 
 #[tokio::test]

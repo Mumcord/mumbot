@@ -7,7 +7,8 @@
 //! (mumcord spec 04, sections 6.4 and 6.6, FR-4.22 to FR-4.28). Relay access (mumbot#29): only
 //! registered users unless `registered_only` is off; a certificate is dropped when its last
 //! session leaves. Issue #31: `allowed_groups` restricts tokens to the members of a group the bot
-//! reads from the server, and a lost membership is revoked.
+//! reads from the server, and a lost membership is revoked. A bot user that is not registered
+//! stops the module, because Mumcord clients ignore announcements of guests.
 
 #![cfg(feature = "tester")]
 
@@ -15,6 +16,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use mumbot::history::HistoryConfig;
 use mumbot::peer::PeerConfig;
 use mumbot::protocol::{Event, permissions};
 use mumbot::voice_settings::VoiceSettings;
@@ -186,6 +188,20 @@ async fn register(bots: &[&Bot]) {
     }
 }
 
+/// Registers the announcer's user, which runs the modules afterwards with the same data dir and
+/// name: Mumcord clients only accept a relay announcement from a registered user. `observer`
+/// waits until it forgot the announcer's session, so a later `wait_user` cannot match the
+/// announcer instead of the modules bot.
+async fn register_announcer(dir: &Path, name: &str, observer: &Bot) {
+    let bot = Bot::connect(client(dir, name)).await.expect("announcer");
+    bot.register().await.expect("announcer registers");
+    bot.disconnect().await.expect("announcer leaves");
+    observer
+        .wait_user_gone(name)
+        .await
+        .expect("the announcer left");
+}
+
 async fn send_hello(bot: u32, clients: &[&Bot]) {
     let hello = br#"{"app":"mumcord","v":1,"features":["p2p"]}"#.to_vec();
     for client in clients {
@@ -283,6 +299,7 @@ async fn clients_learn_the_relay_and_a_pair_gets_a_token() {
         .await
         .expect("bob");
     let (mut alice_events, mut bob_events) = (alice.subscribe(), bob.subscribe());
+    register_announcer(dir.path(), &bot_name, &alice).await;
     let running = tokio::spawn(modules::run(
         peer_config(dir.path(), &bot_name, &relay_url, server_pin()),
         VoiceSettings::default(),
@@ -347,6 +364,7 @@ async fn guests_get_no_token_and_cannot_be_the_peer() {
         .await
         .expect("guest");
     let (mut alice_events, mut guest_events) = (alice.subscribe(), guest.subscribe());
+    register_announcer(dir.path(), &bot_name, &alice).await;
     let running = tokio::spawn(modules::run(
         peer_config(dir.path(), &bot_name, &relay_url, server_pin()),
         VoiceSettings::default(),
@@ -407,6 +425,7 @@ async fn with_registered_only_off_guests_get_tokens() {
     let mut config =
         Arc::unwrap_or_clone(peer_config(dir.path(), &bot_name, &relay_url, server_pin()));
     config.peer.as_mut().expect("peer").registered_only = false;
+    register_announcer(dir.path(), &bot_name, &guest).await;
     let running = tokio::spawn(modules::run(Arc::new(config), VoiceSettings::default()));
     guest
         .wait_user(&bot_name, &UserCheck::default())
@@ -454,6 +473,7 @@ async fn a_certificate_is_dropped_when_its_last_session_leaves() {
         .await
         .expect("observer");
     let mut observer_events = observer.subscribe();
+    register_announcer(dir.path(), &bot_name, &observer).await;
     let running = tokio::spawn(modules::run(
         peer_config(dir.path(), &bot_name, &relay_url, server_pin()),
         VoiceSettings::default(),
@@ -545,6 +565,7 @@ async fn webhook_and_peer_modules_share_one_connection() {
         label: "modules".to_owned(),
         channels: vec![ChannelRef::Id(0)],
     }];
+    register_announcer(dir.path(), &bot_name, &alice).await;
     let running = tokio::spawn(modules::run(Arc::new(config), VoiceSettings::default()));
 
     alice
@@ -596,6 +617,49 @@ async fn webhook_and_peer_modules_share_one_connection() {
             .count(),
         1,
         "one bot user for both modules"
+    );
+
+    running.abort();
+    alice.disconnect().await.expect("alice leaves");
+}
+
+#[tokio::test]
+#[ignore = "needs testenv and MUMBOT_LIVE=1"]
+async fn the_history_module_does_not_keep_the_announcement_from_clients() {
+    if !live() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (relay_url, _) = mock_relay().await;
+    let (alice_name, bot_name) = (unique("alice"), unique("runbot"));
+    let alice = Bot::connect(client(dir.path(), &alice_name))
+        .await
+        .expect("alice");
+    let mut alice_events = alice.subscribe();
+    let mut config =
+        Arc::unwrap_or_clone(peer_config(dir.path(), &bot_name, &relay_url, server_pin()));
+    config.modules.enabled = vec![Module::Peer, Module::History];
+    config.server.channel = Some("Lobby".to_owned());
+    config.history = Some(HistoryConfig {
+        channels: vec![ChannelRef::Name("Lobby".to_owned())],
+        exclude: Vec::new(),
+        retention_days: 7,
+        max_messages_per_channel: 100,
+        database: Some(dir.path().join("history.sqlite3")),
+    });
+    register_announcer(dir.path(), &bot_name, &alice).await;
+    let running = tokio::spawn(modules::run(Arc::new(config), VoiceSettings::default()));
+
+    alice
+        .wait_user(&bot_name, &UserCheck::default())
+        .await
+        .expect("both modules log in as one bot user");
+    let bot = session_of(&alice, &bot_name);
+    send_hello(bot, &[&alice]).await;
+    assert_eq!(
+        next_peer_message(&mut alice_events, bot).await["t"],
+        "relay",
+        "a client that greets the history bot still gets the relay announcement"
     );
 
     running.abort();
@@ -659,6 +723,7 @@ async fn group_members_get_tokens_and_a_lost_membership_is_revoked() {
         }),
         ..base.as_ref().clone()
     });
+    register_announcer(dir.path(), &bot_name, &alice).await;
     let running = tokio::spawn(modules::run(config, VoiceSettings::default()));
     alice
         .wait_user(&bot_name, &UserCheck::default())
@@ -718,7 +783,8 @@ async fn group_access_without_the_write_permission_refuses_to_start() {
     }
     let dir = tempfile::tempdir().expect("tempdir");
     let (relay_url, _) = mock_relay().await;
-    let base = peer_config(dir.path(), &unique("peerbot"), &relay_url, server_pin());
+    let bot_name = unique("peerbot");
+    let base = peer_config(dir.path(), &bot_name, &relay_url, server_pin());
     let config = Arc::new(WebhookConfig {
         peer: Some(PeerConfig {
             allowed_groups: vec!["Relay".to_owned()],
@@ -726,6 +792,10 @@ async fn group_access_without_the_write_permission_refuses_to_start() {
         }),
         ..base.as_ref().clone()
     });
+    let observer = Bot::connect(client(dir.path(), &unique("observer")))
+        .await
+        .expect("observer");
+    register_announcer(dir.path(), &bot_name, &observer).await;
     let result = tokio::time::timeout(
         Duration::from_secs(20),
         modules::run(config, VoiceSettings::default()),
@@ -734,4 +804,5 @@ async fn group_access_without_the_write_permission_refuses_to_start() {
     .expect("the bot answers the ACL query");
     let error = result.expect_err("the bot cannot read the groups, so it refuses to run");
     assert!(error.to_string().contains("Write permission"), "{error}");
+    observer.disconnect().await.expect("observer leaves");
 }

@@ -243,6 +243,12 @@ impl Api for BotApi {
 
 /// The peer module's view of the bot (`src/peer/`).
 impl Link for Arc<BotApi> {
+    async fn registered(&self) -> Option<bool> {
+        let guard = self.bot.lock().await;
+        let bot = guard.as_ref().filter(|bot| bot.handle().is_connected())?;
+        Some(bot.own_user().ok()?.user_id.is_some())
+    }
+
     async fn users(&self) -> Option<Users> {
         let guard = self.bot.lock().await;
         let bot = guard.as_ref().filter(|bot| bot.handle().is_connected())?;
