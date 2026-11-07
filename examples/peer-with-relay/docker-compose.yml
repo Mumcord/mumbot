@@ -42,7 +42,7 @@ services:
       - mumpeer-data:/var/lib/mumpeer
 
   mumbot:
-    image: ghcr.io/mumcord/mumbot:0.4.1
+    image: ghcr.io/mumcord/mumbot:0.5.2
     command: ["peer"]
     restart: unless-stopped
     depends_on:

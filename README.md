@@ -98,7 +98,7 @@ chmod 644 bot.toml
 
 docker run -d --name mumbot -p 127.0.0.1:8080:8080 \
   -v "$PWD/bot.toml:/config/bot.toml:ro" -v mumbot-data:/data \
-  ghcr.io/mumcord/mumbot:0.4.1
+  ghcr.io/mumcord/mumbot:0.5.2
 ```
 
 ```bash
