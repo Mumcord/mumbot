@@ -1,0 +1,79 @@
+# After a release is published: move the image tag the examples, the READMEs, the bug report
+# template and CI pin (ghcr.io/mumcord/mumbot:X.Y.Z) to the new version, in a pull request. The
+# image only exists once the release workflow pushed it, so this cannot happen before the release.
+name: Post-release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Released version, e.g. 0.5.1"
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump-examples:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION_INPUT: ${{ inputs.version || github.event.release.tag_name }}
+    steps:
+      - name: Check version
+        id: version
+        run: |
+          version=${VERSION_INPUT#v}
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "'$VERSION_INPUT' is not a release version like 1.2.3 (pre-releases keep the pins); nothing to do."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v7
+        if: steps.version.outputs.skip == 'false'
+        with:
+          ref: main
+
+      - name: Move the image pins
+        if: steps.version.outputs.skip == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Every place that pins the published image; the issue template's example placeholder
+          # stays as it is.
+          files=$(grep -rlE 'ghcr\.io/mumcord/mumbot:[0-9]+\.[0-9]+\.[0-9]+' \
+            README.md docs examples .github/workflows || true)
+          for f in $files; do
+            sed -i -E "s#(ghcr\.io/mumcord/mumbot:)[0-9]+\.[0-9]+\.[0-9]+#\1${VERSION}#g" "$f"
+          done
+          git diff --stat
+
+      - name: Open or update the pull request
+        if: steps.version.outputs.skip == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if git diff --quiet; then
+            echo "The pins are already at $VERSION; nothing to do."
+            exit 0
+          fi
+          branch="chore/examples-${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -qam "chore: pin the examples to mumbot ${VERSION}"
+          git push -f origin "$branch"
+          if gh pr view "$branch" >/dev/null 2>&1; then
+            echo "The pull request for $branch exists; updated its branch."
+          else
+            gh pr create --base main --head "$branch" \
+              --title "chore: pin the examples to mumbot ${VERSION}" \
+              --body "The examples, READMEs and CI now use \`ghcr.io/mumcord/mumbot:${VERSION}\`, the image the ${VERSION} release published. Opened by the post-release workflow."
+          fi
