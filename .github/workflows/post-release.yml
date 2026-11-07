@@ -1,5 +1,6 @@
-# After a release is published: move the image tag the examples, the READMEs, the bug report
-# template and CI pin (ghcr.io/mumcord/mumbot:X.Y.Z) to the new version, in a pull request. The
+# After a release is published: move the image tag the examples and the READMEs pin
+# (ghcr.io/mumcord/mumbot:X.Y.Z) to the new version, in a pull request. Workflow files are left
+# out: the workflow token may not push changes to them, so a pin there is moved by hand. The
 # image only exists once the release workflow pushed it, so this cannot happen before the release.
 name: Post-release
 
@@ -46,10 +47,10 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          # Every place that pins the published image; the issue template's example placeholder
-          # stays as it is.
+          # Every place that pins the published image, except workflow files (see the top); the
+          # issue template's example placeholder stays as it is.
           files=$(grep -rlE 'ghcr\.io/mumcord/mumbot:[0-9]+\.[0-9]+\.[0-9]+' \
-            README.md docs examples .github/workflows || true)
+            README.md docs examples || true)
           for f in $files; do
             sed -i -E "s#(ghcr\.io/mumcord/mumbot:)[0-9]+\.[0-9]+\.[0-9]+#\1${VERSION}#g" "$f"
           done
