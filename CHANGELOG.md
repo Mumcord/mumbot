@@ -6,6 +6,8 @@ All notable changes to Mumbot are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-11-07
+
 ### Fixed
 
 - The peer module refuses to start when its bot user is not registered, instead of announcing a
