@@ -93,6 +93,8 @@ pub struct Users {
 /// The narrow view of the bot the module needs: who is online, sending plugin data, and reading
 /// the server's ACL groups.
 pub trait Link {
+    /// Whether the bot's own user is registered; `None` while the bot is not connected.
+    fn registered(&self) -> impl Future<Output = Option<bool>> + Send;
     /// `None` while the bot is not connected.
     fn users(&self) -> impl Future<Output = Option<Users>> + Send;
     fn send(&self, receivers: &[u32], data: Vec<u8>) -> impl Future<Output = Result<()>> + Send;
@@ -998,6 +1000,25 @@ fn fingerprint(hex: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
+/// Fails unless the bot's user is registered: Mumcord clients accept a relay announcement only
+/// from a registered user with a certificate, so an unregistered bot announces a relay nobody
+/// uses (FR-4.7, FR-4.8).
+async fn check_registered<L: Link>(link: &L) -> Result<()> {
+    let deadline = Instant::now() + crate::DEFAULT_TIMEOUT;
+    loop {
+        match link.registered().await {
+            Some(true) => return Ok(()),
+            Some(false) => bail!(
+                "the peer module needs a registered bot user, Mumcord clients ignore relay \
+                 announcements of anyone else: register the bot on the server (an admin, or \
+                 `mumbot register`) and start it again"
+            ),
+            None if Instant::now() >= deadline => bail!("peer: the bot did not connect in time"),
+            None => tokio::time::sleep(Duration::from_millis(200)).await,
+        }
+    }
+}
+
 /// Runs the module until the bot's event stream ends.
 pub async fn run<R: RelayApi, L: Link>(
     relay: R,
@@ -1005,6 +1026,7 @@ pub async fn run<R: RelayApi, L: Link>(
     rules: Rules,
     mut events: events::Receiver<Event>,
 ) -> Result<()> {
+    check_registered(&link).await?;
     if !rules.registered_only {
         tracing::warn!(
             "peer: registered_only is off, guests get relay tokens too: anyone can join with \

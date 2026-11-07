@@ -20,7 +20,8 @@ same config section.
 ## Before you start
 
 - **Register the bot** on the Mumble server (a registered user). Mumcord clients only trust a
-  relay announced by a registered user.
+  relay announced by a registered user with a certificate, so the peer bot refuses to start as a
+  guest: register it once with `mumbot register --name <name>` (an admin can do it too).
 - **Pin the server certificate.** The peer bot refuses to start without
   `server.server_cert_sha256` and refuses any server with another certificate, so it never hands
   out tokens on a server it did not mean to join. Get the value on the server host with
@@ -282,3 +283,13 @@ container network) and logs a warning.
 `RUST_LOG=mumbot=info` shows when the bot connected, when the relay became reachable, changed or
 went down, and failed API calls. No user names, broadcast ids, sessions, certificate hashes, tokens or the secret
 are logged.
+
+## When Mumcord says "this server has no relay"
+
+- The bot must be a registered user ([Before you start](#before-you-start)); the peer module
+  refuses to start as a guest, because Mumcord clients ignore announcements of everyone else.
+- Mumcord pins the pair of the bot's certificate and the relay's fingerprint on first use. A bot
+  with a new certificate (its data directory is not on a volume, or it logs in under another name)
+  or a relay with a new certificate (its key is not persisted) counts as a changed relay and is not
+  used until the user clicks "Trust new relay". Keep both, and the bot's name, stable.
+- Two bots announcing a relay on the same server cancel each other out; stop the second one.

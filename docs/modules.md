@@ -7,7 +7,7 @@ user, one client certificate, one reconnect loop.
 | Module | What it does | Needs in `bot.toml` |
 | --- | --- | --- |
 | `webhook` | HTTP API that posts messages into channels ([webhook.md](webhook.md)). | `[http]`, at least one `[[keys]]` |
-| `peer` | Announces a mumpeer relay to Mumcord clients and hands out relay tokens ([peer.md](peer.md)). | `[peer]`, `server.server_cert_sha256` |
+| `peer` | Announces a mumpeer relay to Mumcord clients and hands out relay tokens ([peer.md](peer.md)). | `[peer]`, `server.server_cert_sha256`, a registered bot user |
 | `history` | Records the chat of chosen channels and answers Mumcord's history sync ([history.md](history.md)). | `[history]` |
 | `music` | HTTP API that plays MP3s as voice into a channel, with a queue ([music.md](music.md)). | `[music]` with a `media_dir` or URLs, at least one `[[music.keys]]` |
 | `plugins` | Announces the Mumcord plugins the server community uses to Mumcord clients ([plugins.md](plugins.md)). | `[[plugins.announce]]`, `server.server_cert_sha256`, a registered bot user |
