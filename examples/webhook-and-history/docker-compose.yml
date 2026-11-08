@@ -4,7 +4,7 @@ name: mumbot-webhook-and-history
 
 services:
   mumbot:
-    image: ghcr.io/mumcord/mumbot:0.5.2
+    image: ghcr.io/mumcord/mumbot:0.5.3
     # `run` starts the modules of the config's [modules] enabled list on one connection, so
     # both jobs are one bot user with one certificate. The image's default command is
     # `webhook`, which runs that module only and ignores the list.
