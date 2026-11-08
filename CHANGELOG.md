@@ -6,6 +6,8 @@ All notable changes to Mumbot are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-11-08
+
 ### Changed
 
 - The peer module names why it refused a camera, screen share, file transfer or token instead of
