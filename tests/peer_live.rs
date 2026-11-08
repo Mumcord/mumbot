@@ -316,7 +316,7 @@ async fn clients_learn_the_relay_and_a_pair_gets_a_token() {
         assert_eq!(
             next_peer_message(events, bot).await,
             serde_json::json!({"v":1,"t":"relay","host":"127.0.0.1","udp":443,"tcp":443,
-                "fp":"cd".repeat(32),"state":"up","seq":1})
+                "fp":"cd".repeat(32),"state":"up","seq":1,"reg":true})
         );
     }
     assert!(wait_for_call(&calls, "GET", "/v1/status").await.authorized);
@@ -383,13 +383,13 @@ async fn guests_get_no_token_and_cannot_be_the_peer() {
     request_token(&guest, bot, session_of(&guest, &alice_name));
     assert_eq!(
         next_peer_message(&mut guest_events, bot).await,
-        serde_json::json!({"v":1,"t":"token-err","rid":"0123456789abcdef","r":"denied"}),
+        serde_json::json!({"v":1,"t":"token-err","rid":"0123456789abcdef","r":"not-registered"}),
         "an unregistered requester is refused"
     );
     request_token(&alice, bot, session_of(&alice, &guest_name));
     assert_eq!(
         next_peer_message(&mut alice_events, bot).await["r"],
-        "denied",
+        "not-registered",
         "an unregistered peer is refused"
     );
     assert!(
@@ -404,6 +404,59 @@ async fn guests_get_no_token_and_cannot_be_the_peer() {
     running.abort();
     alice.disconnect().await.expect("alice leaves");
     guest.disconnect().await.expect("guest leaves");
+}
+
+#[tokio::test]
+#[ignore = "needs testenv and MUMBOT_LIVE=1"]
+async fn a_client_without_a_hello_is_told_to_reconnect() {
+    if !live() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (relay_url, _) = mock_relay().await;
+    let (alice_name, bob_name, bot_name) = (unique("alice"), unique("bob"), unique("peerbot"));
+    let alice = Bot::connect(client(dir.path(), &alice_name))
+        .await
+        .expect("alice");
+    let bob = Bot::connect(client(dir.path(), &bob_name))
+        .await
+        .expect("bob");
+    let mut alice_events = alice.subscribe();
+    register_announcer(dir.path(), &bot_name, &alice).await;
+    let running = tokio::spawn(modules::run(
+        peer_config(dir.path(), &bot_name, &relay_url, server_pin()),
+        VoiceSettings::default(),
+    ));
+    alice
+        .wait_user(&bot_name, &UserCheck::default())
+        .await
+        .expect("the peer bot logs in");
+    let bot = session_of(&alice, &bot_name);
+    register(&[&alice, &bob]).await;
+
+    // Alice never said hello, so the bot does not know what her client can do.
+    request_token(&alice, bot, session_of(&alice, &bob_name));
+    assert_eq!(
+        next_peer_message(&mut alice_events, bot).await["r"],
+        "no-hello",
+        "a client the bot has not greeted is named as such"
+    );
+
+    // Her hello fixes it.
+    send_hello(bot, &[&alice, &bob]).await;
+    assert_eq!(
+        next_peer_message(&mut alice_events, bot).await["t"],
+        "relay"
+    );
+    request_token(&alice, bot, session_of(&alice, &bob_name));
+    assert_eq!(
+        next_peer_message(&mut alice_events, bot).await["t"],
+        "token"
+    );
+
+    running.abort();
+    alice.disconnect().await.expect("alice leaves");
+    bob.disconnect().await.expect("bob leaves");
 }
 
 #[tokio::test]
@@ -754,7 +807,7 @@ async fn group_members_get_tokens_and_a_lost_membership_is_revoked() {
     request_token(&alice, bot_session, session_of(&alice, &bob_name));
     assert_eq!(
         next_peer_message(&mut alice_events, bot_session).await["r"],
-        "denied",
+        "group-not-allowed",
         "a former member gets no token"
     );
     let bob_cert = cert_of(&bob);

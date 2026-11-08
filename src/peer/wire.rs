@@ -85,12 +85,13 @@ mod tests {
             uses: Some(vec![RelayUse::Images, RelayUse::Files]),
             broadcast: Some(25),
             plugin_data_kbps: None,
+            registered_only: true,
         });
         assert_eq!(
             json(&relay),
             serde_json::json!({"v":1,"t":"relay","host":"relay.example.org","udp":443,"tcp":443,
                 "fp":"ab".repeat(32),"state":"up","seq":4,
-                "u":["img","file"],"bc":25})
+                "u":["img","file"],"bc":25,"reg":true})
         );
         let token = PeerMessage::Token {
             rid: RID,
@@ -112,6 +113,9 @@ mod tests {
             (TokenErrorReason::RelayDown, "relay-down"),
             (TokenErrorReason::RelayFull, "relay-full"),
             (TokenErrorReason::UseNotAllowed, "use-not-allowed"),
+            (TokenErrorReason::NotRegistered, "not-registered"),
+            (TokenErrorReason::GroupNotAllowed, "group-not-allowed"),
+            (TokenErrorReason::NoHello, "no-hello"),
         ];
         for (reason, text) in reasons {
             assert_eq!(

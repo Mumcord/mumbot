@@ -390,7 +390,7 @@ async fn a_p2p_hello_gets_the_announcement_once_and_only_to_that_client() {
     assert_eq!(
         sent[0].1,
         serde_json::json!({"v":1,"t":"relay","host":"relay.test","udp":443,"tcp":443,
-            "fp":"ab".repeat(32),"state":"up","seq":1})
+            "fp":"ab".repeat(32),"state":"up","seq":1,"reg":true})
     );
     s.peer.on_event(hello(ALICE), now).await;
     let no_p2p = br#"{"app":"mumcord","v":1,"features":[]}"#;
@@ -474,11 +474,11 @@ async fn refused_requests_get_the_reason_and_reach_only_the_requester() {
     s.peer.on_event(hello(GUEST), Instant::now()).await;
     s.link.take_sent();
     let cases = [
-        (request(GUEST, ALICE), "denied"),
-        (request(ALICE, GUEST), "denied"),
+        (request(GUEST, ALICE), "not-registered"),
+        (request(ALICE, GUEST), "not-registered"),
         (request(ALICE, ALICE), "denied"),
         (request(ALICE, BOT), "denied"),
-        (request(OFFICIAL, ALICE), "denied"),
+        (request(OFFICIAL, ALICE), "no-hello"),
         (request(NO_CERT, ALICE), "denied"),
         (request(ALICE, NO_CERT), "denied"),
         (request(ALICE, 99), "peer-gone"),
@@ -838,9 +838,14 @@ async fn a_broadcast_needs_a_screen_sharing_registered_client_and_a_working_rela
     s.peer.on_event(screen_hello(NO_CERT), now).await;
     s.peer.on_event(screen_hello(ALICE), now).await;
     s.link.take_sent();
-    for sender in [BOB, GUEST, NO_CERT, OFFICIAL] {
+    for (sender, reason) in [
+        (BOB, "no-hello"),
+        (GUEST, "not-registered"),
+        (NO_CERT, "denied"),
+        (OFFICIAL, "no-hello"),
+    ] {
         s.peer.on_event(bcast_req(sender), now).await;
-        assert_eq!(only_error(&s, sender), "denied", "session {sender}");
+        assert_eq!(only_error(&s, sender), reason, "session {sender}");
     }
     let refusals: [(BcastAnswer, &str); 3] = [
         (Some(|| BroadcastError::RelayFull), "relay-full"),
@@ -870,7 +875,7 @@ async fn a_broadcast_needs_a_screen_sharing_registered_client_and_a_working_rela
     s.peer.on_event(hello(ALICE), now).await;
     s.link.take_sent();
     s.peer.on_event(bcast_req(ALICE), now).await;
-    assert_eq!(only_error(&s, ALICE), "denied");
+    assert_eq!(only_error(&s, ALICE), "no-hello");
 }
 
 #[tokio::test]
@@ -938,9 +943,17 @@ async fn admissions_are_checked_before_the_relay_is_asked() {
     }
     // Viewers that cannot take part: the bot, the sharer's own identity, offline, no
     // certificate, no screen-share hello, a guest.
-    for viewer in [BOT, ALICE, ALICE2, 99, NO_CERT, OFFICIAL, GUEST] {
+    for (viewer, reason) in [
+        (BOT, "denied"),
+        (ALICE, "denied"),
+        (ALICE2, "denied"),
+        (99, "denied"),
+        (NO_CERT, "denied"),
+        (OFFICIAL, "no-hello"),
+        (GUEST, "no-hello"),
+    ] {
         s.peer.on_event(admit(ALICE, viewer), now).await;
-        assert_eq!(only_error(&s, ALICE), "denied", "viewer {viewer}");
+        assert_eq!(only_error(&s, ALICE), reason, "viewer {viewer}");
     }
     s.peer.on_event(admit(ALICE, CAROL), now).await;
     assert_eq!(only_error(&s, ALICE), "not-same-channel");
@@ -1088,7 +1101,7 @@ async fn only_group_members_get_tokens_when_groups_are_configured() {
     s.peer.on_event(request(ALICE, BOB), now).await;
     assert_eq!(
         s.link.take_sent()[0].1["r"],
-        "denied",
+        "group-not-allowed",
         "both users of the pair must be members"
     );
     assert_eq!(
@@ -1296,9 +1309,9 @@ async fn a_plugin_data_broadcast_needs_the_plugins_hello_not_screen_sharing() {
     s.peer.on_event(plugins_hello(BOB), now).await;
     s.link.take_sent();
     s.peer.on_event(plg_req(ALICE), now).await;
-    assert_eq!(only_error(&s, ALICE), "denied");
+    assert_eq!(only_error(&s, ALICE), "no-hello");
     s.peer.on_event(bcast_req(BOB), now).await;
-    assert_eq!(only_error(&s, BOB), "denied");
+    assert_eq!(only_error(&s, BOB), "no-hello");
     assert_eq!(s.relay.take_calls(), Vec::<String>::new());
 
     s.peer.on_event(plg_req(BOB), now).await;
@@ -1326,7 +1339,7 @@ async fn a_plugin_data_broadcast_admits_only_plugin_clients_in_the_channel() {
     s.relay.take_calls();
 
     s.peer.on_event(admit(ALICE, BOB), now).await;
-    assert_eq!(only_error(&s, ALICE), "denied");
+    assert_eq!(only_error(&s, ALICE), "no-hello");
     s.peer.on_event(admit(ALICE, CAROL), now).await;
     assert_eq!(only_error(&s, ALICE), "not-same-channel");
     assert_eq!(s.relay.take_calls(), Vec::<String>::new());
@@ -1454,7 +1467,7 @@ async fn a_camera_needs_the_camera_hello_and_runs_beside_a_screen_share() {
     s.peer.on_event(camera_hello(ALICE), now).await;
     s.link.take_sent();
     s.peer.on_event(cam_req(BOB), now).await;
-    assert_eq!(only_error(&s, BOB), "denied");
+    assert_eq!(only_error(&s, BOB), "no-hello");
     assert_eq!(s.relay.take_calls(), Vec::<String>::new());
 
     s.peer.on_event(bcast_req(ALICE), now).await;
@@ -1566,4 +1579,53 @@ async fn camera_admits_have_their_own_burst_bucket() {
     // Camera admits do not use up the shared budget of requests.
     s.peer.on_event(bcast_req(ALICE), later).await;
     assert_eq!(s.link.take_sent()[0].1["t"], "bcast");
+}
+
+/// Forgets where the server says `session` is, as after a reconnect.
+fn forget_channel(s: &Setup, session: u32) {
+    let mut users = s.link.users.lock().expect("lock");
+    users.as_mut().expect("users").channels.remove(&session);
+}
+
+#[tokio::test]
+async fn a_camera_sender_without_a_known_channel_is_told_so() {
+    let mut s = setup();
+    s.peer.check_status().await;
+    let now = Instant::now();
+    for session in [ALICE, BOB] {
+        s.peer.on_event(camera_hello(session), now).await;
+    }
+    s.peer.on_event(cam_req(ALICE), now).await;
+    s.link.take_sent();
+    s.relay.take_calls();
+
+    forget_channel(&s, ALICE);
+    // A camera needs the sender's channel for its room; an admission is about both channels.
+    s.peer.on_event(cam_req(ALICE), now).await;
+    assert_eq!(only_error(&s, ALICE), "not-in-channel");
+    s.peer.on_event(admit(ALICE, BOB), now).await;
+    assert_eq!(only_error(&s, ALICE), "not-in-channel");
+    assert!(s.relay.take_calls().is_empty());
+}
+
+#[tokio::test]
+async fn the_announcement_says_when_guests_get_no_token() {
+    let mut s = setup_with(guests_too());
+    s.peer.check_status().await;
+    s.peer.on_event(hello(ALICE), Instant::now()).await;
+    assert_eq!(
+        s.link.take_sent()[0].1.get("reg"),
+        None,
+        "guests get tokens, so there is nothing to warn about"
+    );
+
+    // Group members are registered users, so `registered_only = false` changes nothing.
+    let rules = Rules {
+        registered_only: false,
+        ..group_rules(&["Relay"])
+    };
+    let mut s = setup_with(rules);
+    s.peer.check_status().await;
+    s.peer.on_event(hello(ALICE), Instant::now()).await;
+    assert_eq!(s.link.take_sent()[0].1["reg"], true);
 }

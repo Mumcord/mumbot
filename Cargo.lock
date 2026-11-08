@@ -1241,9 +1241,9 @@ dependencies = [
 
 [[package]]
 name = "mumcord-p2p"
-version = "0.7.0"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ec7fdbcd6d1a8045970971055598e4ed03419976698c88e3ed07f8bad2f3770"
+checksum = "baff7c5abff8826b814d9c1320f66753a18ea461e5b182ad53eefa64a676012c"
 dependencies = [
  "bytes",
  "crab_nat",
