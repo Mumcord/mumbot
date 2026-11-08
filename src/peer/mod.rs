@@ -60,6 +60,41 @@ struct TokenRequest {
     relay_use: RelayUse,
 }
 
+/// Why a session may not use the relay, in the words `token-err` and `bcast-err` share. A
+/// refusal names what the person can change; whatever the bot cannot name stays `Denied`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Refusal {
+    /// No Mumcord hello of this client, or none that lists what the request needs; a client that
+    /// reconnects sends its hello again (FR-4.24).
+    NoHello,
+    /// A guest, while only registered users get tokens.
+    NotRegistered,
+    /// A registered user who is in none of the `allowed_groups`.
+    GroupNotAllowed,
+    /// Not on the server, or no certificate.
+    Denied,
+}
+
+impl Refusal {
+    fn token(self) -> TokenError {
+        match self {
+            Self::NoHello => TokenError::NoHello,
+            Self::NotRegistered => TokenError::NotRegistered,
+            Self::GroupNotAllowed => TokenError::GroupNotAllowed,
+            Self::Denied => TokenError::Denied,
+        }
+    }
+
+    fn broadcast(self) -> BcastError {
+        match self {
+            Self::NoHello => BcastError::NoHello,
+            Self::NotRegistered => BcastError::NotRegistered,
+            Self::GroupNotAllowed => BcastError::GroupNotAllowed,
+            Self::Denied => BcastError::Denied,
+        }
+    }
+}
+
 /// How often the relay's status is polled (FR-4.25).
 pub const STATUS_INTERVAL: Duration = Duration::from_secs(30);
 /// Failed polls in a row before the relay counts as down (FR-4.25).
@@ -410,7 +445,7 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
             .filter_map(|(session, hash)| Some((*session, hash.clone()?)))
             .collect();
         for (session, hash) in known {
-            if self.allowed(&users, session) {
+            if self.refusal(&users, session).is_none() {
                 continue;
             }
             let pair = self.pairs.iter().any(|(a, b)| a == &hash || b == &hash);
@@ -486,6 +521,9 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
             uses: status.announced_uses(),
             broadcast: status.broadcast.map(|b| b.max_viewers),
             plugin_data_kbps: status.plugin_data_kbps(),
+            // A guest gets no token when groups are configured either: group members are
+            // registered users.
+            registered_only: self.rules.registered_only || !self.rules.allowed_groups.is_empty(),
         }))
     }
 
@@ -598,7 +636,9 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
             return Err(BcastError::RateLimited);
         }
         let users = self.link.users().await.ok_or(BcastError::RelayDown)?;
-        let cert = self.member_cert(&users, sender, kind)?;
+        let cert = self
+            .member_cert(&users, sender, kind)
+            .map_err(Refusal::broadcast)?;
         // Plugin data has no reason of its own: nothing is closer than "the relay runs all it
         // allows". A full camera room has `room-full` (FR-8.87).
         let per_channel = match kind {
@@ -608,7 +648,7 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
         };
         let channel = users.channels.get(&sender).copied();
         if let Some((limit, reason)) = per_channel {
-            let channel = channel.ok_or(BcastError::Denied)?;
+            let channel = channel.ok_or(BcastError::NotInChannel)?;
             // The sender's own running broadcast is replaced below, so it does not count.
             let senders = self
                 .broadcasts
@@ -678,17 +718,31 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
             }
             _ => return Err(BcastError::Denied),
         };
-        if self.member_cert(&users, sender, kind)? != publisher_cert || viewer == users.own {
+        if self
+            .member_cert(&users, sender, kind)
+            .map_err(Refusal::broadcast)?
+            != publisher_cert
+            || viewer == users.own
+        {
             return Err(BcastError::Denied);
         }
-        let viewer_cert = self.member_cert(&users, viewer, kind)?;
+        let viewer_cert = self
+            .member_cert(&users, viewer, kind)
+            .map_err(Refusal::broadcast)?;
         let broadcast_kind = broadcast_kind(kind).ok_or(BcastError::Denied)?;
         // Two sessions of one identity are one user; the relay refuses it anyway.
         if viewer_cert == publisher_cert {
             return Err(BcastError::Denied);
         }
-        let channel = |session| users.channels.get(&session);
-        if channel(sender).is_none() || channel(sender) != channel(viewer) {
+        // A sharer whose channel the bot cannot see keeps no room; a viewer without one has
+        // left already.
+        let Some(sharer_channel) = users.channels.get(&sender) else {
+            return Err(BcastError::NotInChannel);
+        };
+        let Some(viewer_channel) = users.channels.get(&viewer) else {
+            return Err(BcastError::Denied);
+        };
+        if sharer_channel != viewer_channel {
             return Err(BcastError::NotSameChannel);
         }
         if self.state != State::Up {
@@ -744,27 +798,24 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
     /// The certificate of a session that may take part in a broadcast of `kind`: online with a
     /// certificate, hello with `p2p` and `screen-share` (screen sharing), `plugins` (plugin
     /// data) or `camera` (cameras), and allowed to use the relay.
-    fn member_cert(
-        &self,
-        users: &Users,
-        session: u32,
-        kind: RelayUse,
-    ) -> Result<String, BcastError> {
+    fn member_cert(&self, users: &Users, session: u32, kind: RelayUse) -> Result<String, Refusal> {
         let feature = match kind {
             RelayUse::PluginData => &self.plugins,
             RelayUse::Camera => &self.camera,
             _ => &self.screen,
         };
-        match users.certs.get(&session) {
-            Some(Some(cert))
-                if self.clients.contains_key(&session)
-                    && feature.contains(&session)
-                    && self.allowed(users, session) =>
-            {
-                Ok(cert.clone())
-            }
-            _ => Err(BcastError::Denied),
+        let Some(Some(cert)) = users.certs.get(&session) else {
+            return Err(Refusal::Denied);
+        };
+        // Without a hello the bot cannot tell whether the client can do this at all; a client
+        // answers a new hello when it comes back (FR-4.24).
+        if !self.clients.contains_key(&session) || !feature.contains(&session) {
+            return Err(Refusal::NoHello);
         }
+        if let Some(refusal) = self.refusal(users, session) {
+            return Err(refusal);
+        }
+        Ok(cert.clone())
     }
 
     /// Ends cameras whose sender changed channel and removes viewers who are no longer in their
@@ -844,10 +895,13 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
             return Err(TokenError::RateLimited);
         }
         let users = self.link.users().await.ok_or(TokenError::RelayDown)?;
-        let own_cert = match users.certs.get(&sender) {
-            Some(Some(cert)) if self.clients.contains_key(&sender) => cert.clone(),
-            _ => return Err(TokenError::Denied),
+        let Some(Some(own_cert)) = users.certs.get(&sender) else {
+            return Err(TokenError::Denied);
         };
+        let own_cert = own_cert.clone();
+        if !self.clients.contains_key(&sender) {
+            return Err(TokenError::NoHello);
+        }
         if !self.cert_limiter.allow(own_cert.clone(), now) {
             return Err(TokenError::RateLimited);
         }
@@ -857,11 +911,8 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
                 .await
                 .map_err(|_| TokenError::Denied)?;
         }
-        // Guests: the client has no finer reason (the reasons are a closed list in Mumcord), so
-        // the bot's log names it.
-        if !self.allowed(&users, sender) {
-            tracing::debug!("peer: token request from a user without relay access");
-            return Err(TokenError::Denied);
+        if let Some(refusal) = self.refusal(&users, sender) {
+            return Err(refusal.token());
         }
         if request.peer == sender || request.peer == users.own {
             return Err(TokenError::Denied);
@@ -878,9 +929,8 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
         if peer_cert == own_cert {
             return Err(TokenError::Denied);
         }
-        if !self.allowed(&users, request.peer) {
-            tracing::debug!("peer: token request for a user without relay access");
-            return Err(TokenError::Denied);
+        if let Some(refusal) = self.refusal(&users, request.peer) {
+            return Err(refusal.token());
         }
         // A new token for an open pair replaces the old one at the relay (FR-4.26).
         if !self.pairs.contains(&pair_key(&own_cert, &peer_cert))
@@ -919,19 +969,28 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
         }
     }
 
-    /// A member of one of the configured groups, or registered when no groups are configured.
-    fn allowed(&self, users: &Users, session: u32) -> bool {
+    /// Why `session` may not use the relay, or `None` when it may: a member of one of the
+    /// configured groups, or registered when no groups are configured.
+    fn refusal(&self, users: &Users, session: u32) -> Option<Refusal> {
         if self.rules.allowed_groups.is_empty() {
-            return !self.rules.registered_only || users.user_ids.contains_key(&session);
+            return match self.rules.registered_only && !users.user_ids.contains_key(&session) {
+                true => Some(Refusal::NotRegistered),
+                false => None,
+            };
         }
+        // Groups need a registered user, so a guest gets the reason that names the first step.
         let Some(id) = users.user_ids.get(&session) else {
-            return false;
+            return Some(Refusal::NotRegistered);
         };
-        self.rules.allowed_groups.iter().any(|name| {
+        let member = self.rules.allowed_groups.iter().any(|name| {
             self.groups
                 .get(name)
                 .is_some_and(|members| members.contains(id))
-        })
+        });
+        match member {
+            true => None,
+            false => Some(Refusal::GroupNotAllowed),
+        }
     }
 
     fn open_pairs(&self, hash: &str) -> usize {

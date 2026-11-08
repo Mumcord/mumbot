@@ -6,6 +6,17 @@ All notable changes to Mumbot are listed here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The peer module names why it refused a camera, screen share, file transfer or token instead of
+  answering a bare `denied`: `not-registered` (a guest while only registered users get tokens),
+  `group-not-allowed` (registered, but in none of the `allowed_groups`), `no-hello` (the bot has
+  not seen this client's hello, so reconnecting helps) and, for broadcasts, `not-in-channel`. The
+  reason is logged at debug level without any personal data. A Mumcord client older than 0.8
+  reads the unknown reasons as `denied` as before. The relay announcement now says `reg` when
+  guests get no token, so a guest's client can explain itself before trying. Needs
+  `mumcord-p2p` 0.7.2.
+
 ## [0.5.2] - 2026-11-07
 
 ### Fixed

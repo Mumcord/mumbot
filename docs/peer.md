@@ -46,7 +46,7 @@ official Mumble clients ignore. Each message is compact JSON of at most 1000 byt
    and answers it, to that client only:
 
    ```json
-   {"v":1,"t":"relay","host":"relay.example.org","udp":443,"tcp":443,"fp":"<64 hex>","state":"up","seq":4,"u":["img","file","scr","plg","cam"],"bc":25,"pk":512}
+   {"v":1,"t":"relay","host":"relay.example.org","udp":443,"tcp":443,"fp":"<64 hex>","state":"up","seq":4,"u":["img","file","scr","plg","cam"],"bc":25,"pk":512,"reg":true}
    ```
 
    `host`, ports and `fp` (SHA-256 of the relay certificate) come from the relay's status, so the
@@ -64,8 +64,10 @@ official Mumble clients ignore. Each message is compact JSON of at most 1000 byt
    `u` out, which means all) and `bc` is the relay's maximum viewers per broadcast
    (`broadcast.max_viewers`; left out when the relay offers no broadcasts). `pk` is the most
    kilobits per second one participant may send as plugin data (`plugin_data.max_kbps_per_sender`);
-   it is left out when the relay reports no such limit or does not allow plugin data. When any of
-   them changes, every remembered client gets a new announcement.
+   it is left out when the relay reports no such limit or does not allow plugin data. `reg: true`
+   says that guests get no token (`registered_only = true`, or `allowed_groups` set), so a guest's
+   client can say so before it tries. When any of them changes, every remembered client gets a new
+   announcement.
 
 2. **Token.** A client that wants a relayed connection to one other person asks the bot:
 
@@ -90,7 +92,10 @@ official Mumble clients ignore. Each message is compact JSON of at most 1000 byt
 
    | `r` | Why |
    | --- | --- |
-   | `denied` | The requester has no certificate or sent no `p2p` hello, or asked for itself, the bot, a peer without certificate or a second session of the same identity; or the requester or the peer may not use the relay (a guest while `registered_only` is on, or not a member of an `allowed_groups` group); or the bot cannot read the groups. The bot's debug log tells these apart; the client only knows this list of reasons. |
+   | `denied` | The requester has no certificate, or asked for itself, the bot, a peer without certificate or a second session of the same identity; or the bot cannot read the groups. |
+   | `no-hello` | The bot has not seen this client's `p2p` hello (for example after the bot restarted); a client that reconnects sends it again. |
+   | `not-registered` | The requester or the peer is a guest while only registered users get tokens. |
+   | `group-not-allowed` | The requester or the peer is a registered user in none of the `allowed_groups` groups. |
    | `peer-gone` | The peer is not on the server. |
    | `peer-not-mumcord` | The peer sent no hello with `p2p`. |
    | `rate-limited` | More than 6 requests from this session in a minute, more than `cert_requests_per_minute` (10) from all sessions with this certificate in a minute, more than `max_pairs_per_cert` (4) open pairs with this certificate, or the relay asked the bot to slow down. |
@@ -194,7 +199,11 @@ official Mumble clients ignore. Each message is compact JSON of at most 1000 byt
 
    | `r` | Why |
    | --- | --- |
-   | `denied` | The sender or viewer has no certificate, sent no hello with `p2p` and `screen-share` (`plugins` for plugin data, `camera` for cameras), may not use the relay, or the viewer is the sharer, the bot or not on the server; the sender is not the broadcast's publisher; or the broadcast is unknown or has already ended at the relay. |
+   | `denied` | The sender or viewer has no certificate, or the viewer is the sharer, the bot or not on the server; the sender is not the broadcast's publisher; or the broadcast is unknown or has already ended at the relay. |
+   | `no-hello` | The bot has not seen this client's hello with `p2p` and `screen-share` (`plugins` for plugin data, `camera` for cameras); a client that reconnects sends it again. |
+   | `not-registered` | The sender or viewer is a guest while only registered users get tokens. |
+   | `group-not-allowed` | The sender or viewer is a registered user in none of the `allowed_groups` groups. |
+   | `not-in-channel` | The server has not told the bot which channel the sender is in, so a camera cannot check its room and an admission cannot compare channels. |
    | `not-same-channel` | The viewer is not in the sharer's channel. |
    | `full` | The broadcast has as many viewers as it allows. |
    | `rate-limited` | More than 60 `bcast-req` and `bcast-admit` from this session in a minute, or camera admits beyond a burst of 24 and 60 per minute. |
@@ -217,8 +226,8 @@ The relay carries traffic between the two users of a pair, so the bot only hands
 people the server knows. Both users of a pair must be allowed.
 
 - **Default: registered users (`registered_only = true`).** Unregistered guests never get a
-  token, also not as the peer of someone else's request; they get `denied`. Certificates are free
-  to create, a registration is not: an admin decides who is registered.
+  token, also not as the peer of someone else's request; they get `not-registered`.
+  Certificates are free to create, a registration is not: an admin decides who is registered.
 - **`registered_only = false`: guests too.** Anyone with a certificate who sends a Mumcord hello
   can get tokens. The bot logs a warning at start. Risk: someone can join twice with fresh
   certificates, pair their own two sessions and use the relay as a long-lived bandwidth tunnel
