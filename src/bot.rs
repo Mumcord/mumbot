@@ -147,7 +147,25 @@ pub struct Bot {
     handle: Handle,
     observed: Arc<Observed>,
     events: broadcast::Sender<Event>,
-    pump: JoinHandle<()>,
+    pump: Pump,
+}
+
+/// The task that forwards the connection's events to the waiters and subscribers. It is taken
+/// when it is awaited: a finished task may be polled only once, and a panic instead of a retry
+/// is what killed the bot after a server restart (issue #65).
+#[derive(Default)]
+struct Pump(Option<JoinHandle<()>>);
+
+impl Pump {
+    /// Waits until the task ended, at most `timeout`. A second call returns at once.
+    async fn close(&mut self, timeout: Duration) {
+        let Some(pump) = self.0.take() else {
+            return;
+        };
+        if tokio::time::timeout(timeout, pump).await.is_err() {
+            tracing::warn!("connection did not close in time");
+        }
+    }
 }
 
 impl Bot {
@@ -172,12 +190,12 @@ impl Bot {
             log: Mutex::new(Log::default()),
             tick: watch::Sender::new(0),
         });
-        let pump = tokio::spawn(pump(
+        let pump = Pump(Some(tokio::spawn(pump(
             conn.handle.clone(),
             conn.events,
             observed.clone(),
             events.clone(),
-        ));
+        ))));
         Ok(Self {
             config,
             handle: conn.handle,
@@ -254,14 +272,10 @@ impl Bot {
     }
 
     /// Closes the connection and waits until it is closed, so the server sees the session end.
+    /// Safe to call again, e.g. when a reconnect attempt after a close could not log in.
     async fn close(&mut self) {
         self.handle.disconnect();
-        if tokio::time::timeout(self.config.timeout, &mut self.pump)
-            .await
-            .is_err()
-        {
-            tracing::warn!("connection did not close in time");
-        }
+        self.pump.close(self.config.timeout).await;
     }
 
     /// Raw protocol handle, e.g. for the voice module.
@@ -548,5 +562,28 @@ fn fetch_missing_blobs(handle: &Handle, requested: &mut HashSet<(u32, Vec<u8>)>)
         && let Err(err) = handle.request_blobs(&textures, &comments, &[])
     {
         tracing::warn!(%err, "requesting avatars/comments failed");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A failed reconnect attempt leaves the bot closed; the next attempt closes it again.
+    /// Awaiting the finished forwarding task a second time panicked the whole process (issue #65).
+    #[tokio::test]
+    async fn a_closed_connection_is_not_awaited_twice() {
+        let mut pump = Pump(Some(tokio::spawn(async {})));
+        pump.close(Duration::from_secs(1)).await;
+        pump.close(Duration::from_secs(1)).await;
+        assert!(pump.0.is_none(), "the task is awaited only once");
+    }
+
+    /// A forwarding task that does not end must not hang the close past its timeout.
+    #[tokio::test]
+    async fn a_task_that_does_not_end_gives_up_after_the_timeout() {
+        let mut pump = Pump(Some(tokio::spawn(std::future::pending::<()>())));
+        pump.close(Duration::from_millis(50)).await;
+        assert!(pump.0.is_none(), "the task is not kept for a second wait");
     }
 }

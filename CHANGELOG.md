@@ -6,6 +6,14 @@ All notable changes to Mumbot are listed here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- The bot no longer panics (`JoinHandle polled after completion`) when the Mumble server restarts
+  and a reconnect attempt cannot log in: after such an attempt it kept the already finished
+  forwarding task and waited on it again on the next try, which killed the whole process and left
+  the peer module without a relay announcement until someone restarted the bot. Reconnects are now
+  retried until the server is back (issue #65).
+
 ## [0.5.3] - 2026-11-08
 
 ### Changed
