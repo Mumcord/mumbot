@@ -6,6 +6,13 @@ All notable changes to Mumbot are listed here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- The history module compiles against `mumcord-protocol` 0.7.1 and later again: the permissions
+  event gained the `flush` flag, which the match there did not list, so a build whose lock
+  resolves a newer protocol patch release failed. The bot ignores the flag, as it changes nothing
+  the history proof relies on.
+
 ## [0.5.3] - 2026-11-08
 
 ### Changed
