@@ -12,7 +12,7 @@ publish = false
 # Published by the Mumcord client project; a minor bump (by hand or Dependabot) must pass the
 # live tests. mumcord-codec (Opus without device I/O, so static builds need no ALSA) gives the
 # bots' voice the same codec settings as the client.
-mumcord-protocol = "0.7"
+mumcord-protocol = "0.7.2"
 mumcord-codec = "0.7"
 bytes = "1"
 hound = { version = "3.5", optional = true }
@@ -43,7 +43,7 @@ webpki-roots = "1"
 # so the static musl builds need no system SQLite.
 rusqlite = { version = "0.41", features = ["bundled"] }
 # Avatar: base64 config values, and decoding/scaling the image to Mumble's texture limits.
-base64 = "0.22"
+base64 = "0.23"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
 [features]
