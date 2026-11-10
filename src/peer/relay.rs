@@ -61,6 +61,9 @@ pub struct Status {
     /// Plugin data limits (Mumcord spec 09); absent on a relay without plugin data.
     #[serde(default)]
     pub plugin_data: Option<PluginDataStatus>,
+    /// The relay's media profile version (Mumcord FR-7.96); absent or 0 is the old format.
+    #[serde(default)]
+    pub media: u8,
 }
 
 /// The relay's broadcast limits from `GET /v1/status`.
@@ -764,6 +767,7 @@ mod tests {
             uses: None,
             broadcast: None,
             plugin_data: None,
+            media: 0,
         };
         assert_eq!(good.clone().validate().expect("valid").fp, "ab".repeat(32));
         let bad: [fn(&mut Status); 9] = [
