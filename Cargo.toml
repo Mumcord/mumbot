@@ -43,7 +43,7 @@ webpki-roots = "1"
 # so the static musl builds need no system SQLite.
 rusqlite = { version = "0.41", features = ["bundled"] }
 # Avatar: base64 config values, and decoding/scaling the image to Mumble's texture limits.
-base64 = "0.22"
+base64 = "0.23"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
 [features]
