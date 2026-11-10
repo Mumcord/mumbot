@@ -342,6 +342,15 @@ cp testenv/.env.example testenv/.env && testenv/up.sh     # local test server (D
 MUMBOT_LIVE=1 cargo test --features tester -- --ignored --test-threads=1     # live tests against it
 ```
 
+### Building on FreeBSD
+
+`mumcord-protocol` compiles the Mumble protobuf messages while it builds. Linux, macOS and
+Windows get a bundled `protoc`; FreeBSD has none, so the build uses the one from the system:
+
+```bash
+pkg install protobuf
+```
+
 - Features start as a spec in [`specs/`](specs/); the [roadmap](specs/roadmap.md) lists what comes
   next.
 - Small commits in [Conventional Commits](https://www.conventionalcommits.org/) style, user-visible
