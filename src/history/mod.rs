@@ -93,9 +93,10 @@ pub async fn run<L: HistoryLink>(
                     blocking(&core, move |core| core.record(&message, &state, now_millis()))
                         .await?;
                 }
-                Ok(Event::PermissionsUpdated { channel_id: Some(channel) }) => {
+                Ok(Event::PermissionsUpdated { channel_id: Some(channel), .. }) => {
                     // The bits are only in the state; a flush without a channel changes nothing
-                    // the proof relies on (it needs an answer after the challenge).
+                    // the proof relies on (it needs an answer after the challenge). The `flush`
+                    // flag does not affect it either.
                     let Some(bits) = link
                         .state()
                         .await
