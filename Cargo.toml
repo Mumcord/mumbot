@@ -12,7 +12,11 @@ publish = false
 # Published by the Mumcord client project; a minor bump (by hand or Dependabot) must pass the
 # live tests. mumcord-codec (Opus without device I/O, so static builds need no ALSA) gives the
 # bots' voice the same codec settings as the client.
-mumcord-protocol = "0.7.2"
+# WIP, blocked: 0.8 is not published yet. From it on the protocol crate compiles its protobuf
+# messages with a `protoc` from the system (PROTOC or /usr/local/bin, /usr/bin) where
+# protoc-bin-vendored ships no binary, which is what FreeBSD needs (issue #64). Until the release
+# lands this file's requirement cannot be satisfied; the lock file still pins 0.7.2.
+mumcord-protocol = "0.8"
 mumcord-codec = "0.7"
 bytes = "1"
 hound = { version = "3.5", optional = true }

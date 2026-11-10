@@ -6,6 +6,13 @@ All notable changes to Mumbot are listed here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- FreeBSD (issue #64): the build no longer fails because `mumcord-protocol` finds no bundled
+  `protoc`. From `mumcord-protocol` 0.8 on it takes the compiler from `PROTOC` or from the system
+  (`/usr/local/bin`, `/usr/bin`), so `pkg install protobuf` is all FreeBSD needs before
+  `cargo build --release`.
+
 ## [0.5.4] - 2026-11-10
 
 ### Fixed
@@ -19,7 +26,6 @@ All notable changes to Mumbot are listed here. The format follows
   event gained the `flush` flag, which the match there did not list, so a build whose lock
   resolves a newer protocol patch release failed. The bot ignores the flag, as it changes nothing
   the history proof relies on.
-
 ## [0.5.3] - 2026-11-08
 
 ### Changed
