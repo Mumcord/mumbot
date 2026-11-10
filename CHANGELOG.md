@@ -6,6 +6,8 @@ All notable changes to Mumbot are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-11-10
+
 ### Fixed
 
 - The bot no longer panics (`JoinHandle polled after completion`) when the Mumble server restarts
