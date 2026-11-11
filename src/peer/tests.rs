@@ -86,6 +86,7 @@ impl RelayApi for Arc<MockRelay> {
         publisher: &str,
         max_viewers: u16,
         relay_use: RelayUse,
+        _media: bool,
     ) -> Result<NewBroadcast, BroadcastError> {
         let kind = match relay_use {
             RelayUse::ScreenShare => String::new(),

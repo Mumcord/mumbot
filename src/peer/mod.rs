@@ -672,7 +672,7 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
         if self.state != State::Up {
             return Err(BcastError::RelayDown);
         }
-        let created = match self.relay.create_broadcast(&cert, max, kind).await {
+        let created = match self.relay.create_broadcast(&cert, max, kind, media).await {
             Ok(created) => created,
             Err(BroadcastError::RelayFull) => return Err(BcastError::RelayFull),
             Err(BroadcastError::UseNotAllowed) => return Err(BcastError::UseNotAllowed),
