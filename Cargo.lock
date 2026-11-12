@@ -1235,7 +1235,7 @@ dependencies = [
 [[package]]
 name = "mumcord-codec"
 version = "0.7.2"
-source = "git+https://github.com/Mumcord/mumcord?branch=feat%2Fd4-relay-capabilities#abc88dd09379fa9c381a2a898a2ee5777623744d"
+source = "git+https://github.com/Mumcord/mumcord?branch=feat%2Fd4-relay-capabilities#7794576b5b9aec9e49d64b54e4fb6764efbe35ef"
 dependencies = [
  "nnnoiseless",
  "opus",
@@ -1248,7 +1248,7 @@ dependencies = [
 [[package]]
 name = "mumcord-p2p"
 version = "0.7.2"
-source = "git+https://github.com/Mumcord/mumcord?branch=feat%2Fd4-relay-capabilities#abc88dd09379fa9c381a2a898a2ee5777623744d"
+source = "git+https://github.com/Mumcord/mumcord?branch=feat%2Fd4-relay-capabilities#7794576b5b9aec9e49d64b54e4fb6764efbe35ef"
 dependencies = [
  "bovnar",
  "bytes",
@@ -1272,7 +1272,7 @@ dependencies = [
 [[package]]
 name = "mumcord-protocol"
 version = "0.7.2"
-source = "git+https://github.com/Mumcord/mumcord?branch=feat%2Fd4-relay-capabilities#abc88dd09379fa9c381a2a898a2ee5777623744d"
+source = "git+https://github.com/Mumcord/mumcord?branch=feat%2Fd4-relay-capabilities#7794576b5b9aec9e49d64b54e4fb6764efbe35ef"
 dependencies = [
  "aes",
  "base64",
