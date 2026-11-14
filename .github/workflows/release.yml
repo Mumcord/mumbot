@@ -1,8 +1,8 @@
 name: Release
 
 # Pushing a tag `vX.Y.Z` on main checks that it matches the Cargo version, builds the binaries
-# and the multi-arch Docker images, and creates a DRAFT GitHub release with the binaries and
-# SHA256SUMS. The maintainer reviews and publishes the release by hand.
+# and the multi-arch Docker images, generates the SBOMs, and creates a DRAFT GitHub release with
+# the binaries, the SBOMs and SHA256SUMS. The maintainer reviews and publishes the release by hand.
 #
 # Every release has two variants (specs/03-modules-specification.md): `mumbot`, the production
 # modules only, and `mumbot-tester`, built with the `tester` feature (plus the scripted test bot).
@@ -183,9 +183,50 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+  # One CycloneDX SBOM per variant and platform (scripts/generate-sbom.sh), from the tagged commit.
+  sbom:
+    name: Generate SBOMs
+    needs: guard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read tool versions
+        id: tools
+        run: grep '^[A-Z_]*=' scripts/sbom-tools.env >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore cargo-cyclonedx
+        id: cyclonedx
+        uses: actions/cache@v6
+        with:
+          path: ~/.cargo/bin/cargo-cyclonedx
+          key: cargo-cyclonedx-${{ runner.os }}-${{ runner.arch }}-${{ steps.tools.outputs.CARGO_CYCLONEDX_VERSION }}
+
+      - name: Install cargo-cyclonedx
+        if: steps.cyclonedx.outputs.cache-hit != 'true'
+        env:
+          CARGO_CYCLONEDX_VERSION: ${{ steps.tools.outputs.CARGO_CYCLONEDX_VERSION }}
+        run: cargo install --locked cargo-cyclonedx --version "$CARGO_CYCLONEDX_VERSION"
+
+      - name: Generate SBOMs
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          scripts/generate-sbom.sh "$VERSION" dist
+          ls -l dist
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mumbot-sbom
+          path: dist/*
+          if-no-files-found: error
+
   release:
     name: Draft release
-    needs: [guard, binaries, docker]
+    needs: [guard, binaries, docker, sbom]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -206,11 +247,13 @@ jobs:
           VERSION: ${{ needs.guard.outputs.version }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          # Fails if any binary is missing.
+          # Fails if any binary or SBOM is missing.
           files=()
           for variant in mumbot mumbot-tester; do
             files+=("$variant-$VERSION-linux-x86_64.tar.gz" "$variant-$VERSION-linux-aarch64.tar.gz"
-              "$variant-$VERSION-windows-x86_64.zip" "$variant-$VERSION-macos-universal.tar.gz")
+              "$variant-$VERSION-windows-x86_64.zip" "$variant-$VERSION-macos-universal.tar.gz"
+              "$variant-$VERSION-linux.cdx.json" "$variant-$VERSION-windows-x86_64.cdx.json"
+              "$variant-$VERSION-macos-universal.cdx.json")
           done
           ls -l -- "${files[@]}"
           sha256sum -- "${files[@]}" > SHA256SUMS
@@ -227,6 +270,8 @@ jobs:
           - **Tester**: the same archives as \`mumbot-tester-$VERSION-<platform>\`, and \`docker pull ghcr.io/mumcord/mumbot-tester:$VERSION\`
 
           Each archive holds the \`mumbot\` binary at its top level. Check a download with \`sha256sum -c SHA256SUMS --ignore-missing\`. Start with the README and \`bot.example.toml\` in the archive.
+
+          The \`.cdx.json\` files are software bills of materials (CycloneDX 1.5): the Rust crates and the bundled C libraries (Opus, SQLite) in each binary, as \`<variant>-$VERSION-<platform>.cdx.json\`. The \`linux\` one covers both Linux archives and the binary in the Docker images.
 
           Built by [this workflow run]($RUN_URL). Licensed under the [GNU AGPL-3.0](https://github.com/Mumcord/mumbot/blob/main/LICENSE) only.
 
