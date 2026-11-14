@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use mumcord_protocol::{Event, ServerState, permissions};
+use mumble_client_protocol::{Event, ServerState, permissions};
 use tokio::sync::broadcast;
 
 pub use config::HistoryConfig;

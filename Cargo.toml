@@ -12,7 +12,7 @@ publish = false
 # Published by the Mumcord client project; a minor bump (by hand or Dependabot) must pass the
 # live tests. mumcord-codec (Opus without device I/O, so static builds need no ALSA) gives the
 # bots' voice the same codec settings as the client.
-mumcord-protocol = ">=0.7.2, <0.9.0"
+mumble-client-protocol = "0.1"
 mumcord-codec = ">=0.7, <0.9.0"
 bytes = "1"
 hound = { version = "3.5", optional = true }
@@ -26,7 +26,7 @@ serde = { version = "1", features = ["derive"] }
 toml = "1.1"
 serde_json = "1"
 # Peer bot: TLS to the relay API with a pinned certificate, on the rustls/ring stack that
-# mumcord-protocol already brings in (no extra crypto library).
+# mumble-client-protocol already brings in (no extra crypto library).
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 ring = "0.17"

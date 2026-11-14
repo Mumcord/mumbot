@@ -56,7 +56,7 @@ The phases are the same in both modes; only who does the work differs:
 - It introduces a new module, persisted data format/migration, or new dependency.
 - It concerns voice (Opus encoding, transmission) or concurrency/async behaviour (locks, timeouts, reconnect).
 - It concerns the Mumble protocol, the bot's HTTP/API surface, TLS/certificates, API keys, security or privacy.
-- It involves platform-specific code, the `mumcord-protocol` dependency tag, or build/packaging/Docker/CI.
+- It involves platform-specific code, the `mumble-client-protocol` dependency tag, or build/packaging/Docker/CI.
 - It needs an architecture decision, or the spec leaves room for interpretation.
 
 Everything else is `simple`.

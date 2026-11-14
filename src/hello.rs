@@ -18,7 +18,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::time::Duration;
 
 use anyhow::Result;
-use mumcord_protocol::Event;
+use mumble_client_protocol::Event;
 use serde::Serialize;
 use tokio::sync::broadcast;
 use tokio::time::Instant;
@@ -53,7 +53,7 @@ struct BotInfo<'a> {
 }
 
 /// The release name the bot sends to the server, which every Mumble client shows as its client:
-/// "Mumbot <version>" instead of the protocol crate's default "Mumcord <version>".
+/// "Mumbot <version>" instead of the protocol crate's default "mumble-client-protocol <version>".
 pub fn client_release() -> String {
     format!("{PRODUCT} {}", env!("CARGO_PKG_VERSION"))
 }
@@ -191,7 +191,7 @@ mod tests {
 
     use anyhow::bail;
     use bytes::Bytes;
-    use mumcord_protocol::{DisconnectReason, PLUGIN_DATA_MAX, PluginData, User};
+    use mumble_client_protocol::{DisconnectReason, PLUGIN_DATA_MAX, PluginData, User};
 
     use super::*;
 

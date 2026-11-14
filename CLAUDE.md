@@ -39,8 +39,8 @@ Everything is in English: chat, specs, docs, code, comments, commit messages and
 ## Stack
 
 - **Language:** Rust (edition 2024, MSRV 1.90), one crate `mumbot` (library + `mumbot` binary).
-- **Mumble protocol and voice:** `mumcord-protocol` and `mumcord-codec` (Opus, no device I/O), both from crates.io and published by `Mumcord/mumcord`; a version bump (by hand or a Dependabot pull request) must pass the live tests.
-- **Async runtime:** tokio. TLS: rustls with ring (via `mumcord-protocol`).
+- **Mumble protocol and voice:** `mumble-client-protocol` (the Mumble wire protocol, extracted from Mumcord) and `mumcord-codec` (Opus, no device I/O, published by `Mumcord/mumcord`), both from crates.io; a version bump (by hand or a Dependabot pull request) must pass the live tests.
+- **Async runtime:** tokio. TLS: rustls with ring (via `mumble-client-protocol`).
 - **HTTP:** the webhook API is a small HTTP/1.1 handler on `tokio::net` (no web framework), JSON via serde/serde_json.
 - **Config:** TOML (`toml` + serde). CLI: clap. Logs: tracing (`RUST_LOG`).
 - **Packaging:** two variants per release, `mumbot` (main, default features) and `mumbot-tester` (`--features tester`): static musl binaries for Linux (cross-built with cargo-zigbuild), native builds for Windows and macOS, multi-arch Docker images `ghcr.io/mumcord/mumbot` and `ghcr.io/mumcord/mumbot-tester` (Alpine runtime, non-root).
@@ -61,7 +61,7 @@ Don't introduce anything without a reason.
 - Keep protocol handling, bot logic and outside interfaces (HTTP API, CLI) in separate modules; the HTTP handler talks to the bot through a narrow trait, never to the protocol directly.
 - A bot is long-running: reconnect after a dropped link, never block the async runtime (no blocking I/O or long locks in async code), bound every wait with a timeout.
 - Stay compatible with standard Mumble servers; no private protocol extensions.
-- Anything a bot needs that is missing in `mumcord-protocol` is first discussed for Mumcord, not patched around here.
+- Anything a bot needs that is missing in `mumble-client-protocol` is first discussed for that crate, not patched around here.
 
 **Tests**
 - New logic gets tests. Critical flows get a live test along the acceptance criteria, against the local test server (`MUMBOT_LIVE=1 cargo test --features tester -- --ignored --test-threads=1`).

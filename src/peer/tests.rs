@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::bail;
 use bytes::Bytes;
-use mumcord_protocol::{DisconnectReason, PluginData, User, UserChange};
+use mumble_client_protocol::{DisconnectReason, PluginData, User, UserChange};
 
 use super::*;
 
@@ -209,7 +209,7 @@ impl Link for Arc<MockLink> {
     }
 
     async fn send(&self, receivers: &[u32], data: Vec<u8>) -> Result<()> {
-        assert!(data.len() <= mumcord_protocol::PLUGIN_DATA_MAX);
+        assert!(data.len() <= mumble_client_protocol::PLUGIN_DATA_MAX);
         let json = serde_json::from_slice(&data).expect("json");
         self.sent
             .lock()
@@ -548,6 +548,7 @@ async fn leaving_or_changing_certificate_drops_the_hash_at_the_relay() {
         joined: false,
         moved_from: None,
         actor: None,
+        echoed_rights: 0,
     };
     s.peer.on_event(Event::UserUpdated(change), now).await;
     s.peer.on_event(removed(ALICE, cert("a1")), now).await;
@@ -769,6 +770,7 @@ fn moved(session: u32, cert_hash: Option<String>) -> Event {
         joined: false,
         moved_from: Some(0),
         actor: None,
+        echoed_rights: 0,
     })
 }
 
@@ -1074,6 +1076,7 @@ async fn leaving_ends_the_broadcast_or_the_watching() {
         joined: false,
         moved_from: None,
         actor: None,
+        echoed_rights: 0,
     };
     s.peer.on_event(Event::UserUpdated(change), now).await;
     assert_eq!(s.relay.take_calls(), vec!["delete 00000000000000b1"]);

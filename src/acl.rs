@@ -2,7 +2,7 @@
 //! descriptions (`ChannelState`).
 
 use anyhow::{Result, bail};
-use mumcord_protocol::{permissions, proto};
+use mumble_client_protocol::{permissions, proto};
 
 use crate::Bot;
 

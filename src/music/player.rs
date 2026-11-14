@@ -7,9 +7,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use anyhow::{Result, anyhow, bail};
+use mumble_client_protocol::Handle;
+use mumble_client_protocol::voice::Transport;
 use mumcord_codec::{FRAME_SAMPLES, Frame, SAMPLE_RATE};
-use mumcord_protocol::Handle;
-use mumcord_protocol::voice::Transport;
 use rtrb::{Consumer, RingBuffer};
 use serde::Serialize;
 use tokio::sync::Notify;
@@ -377,7 +377,7 @@ async fn send(
     player: &Player,
     consumer: &mut Consumer<f32>,
     encoder: &mut PacketEncoder,
-    transport: &mumcord_protocol::voice::VoiceTransport,
+    transport: &mumble_client_protocol::voice::VoiceTransport,
     frame_ms: u32,
 ) -> Result<Ending> {
     let frames_per_packet = encoder.frames_per_packet;

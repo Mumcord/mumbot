@@ -34,7 +34,7 @@ use std::hash::Hash;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
-use mumcord_protocol::Event;
+use mumble_client_protocol::Event;
 use tokio::sync::broadcast as events;
 use tokio::time::Instant;
 

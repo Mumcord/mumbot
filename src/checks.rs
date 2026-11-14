@@ -4,8 +4,8 @@
 
 use anyhow::{Result, anyhow, bail};
 #[cfg(feature = "tester")]
-use mumcord_protocol::TextMessage;
-use mumcord_protocol::{ServerState, User};
+use mumble_client_protocol::TextMessage;
+use mumble_client_protocol::{ServerState, User};
 
 /// Expected state of another user; unset fields are not checked.
 #[cfg(feature = "tester")]
@@ -159,9 +159,9 @@ pub fn find_user<'a>(state: &'a ServerState, name: &str) -> Option<&'a User> {
 
 #[cfg(test)]
 mod tests {
-    use mumcord_protocol::Channel;
+    use mumble_client_protocol::Channel;
     #[cfg(feature = "tester")]
-    use mumcord_protocol::TextTarget;
+    use mumble_client_protocol::TextTarget;
 
     use super::*;
 

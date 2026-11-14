@@ -6,6 +6,14 @@ All notable changes to Mumbot are listed here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The Mumble protocol code now comes from the `mumble-client-protocol` crate (0.1), the
+  standalone successor of `mumcord-protocol`, which gets no more updates. Nothing changes for
+  servers or users: the bot still shows itself as `Mumbot <version>`. `mumcord-p2p` keeps its
+  own copy of the old crate until its 0.9.0 release; the bot only uses its message types, so the
+  two never meet.
+
 ## [0.5.4] - 2026-11-10
 
 ### Fixed

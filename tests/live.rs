@@ -5,9 +5,9 @@
 
 use std::path::Path;
 
+use mumble_client_protocol::{DenyKind, permissions};
 use mumbot::samples::{PNG, Sample};
 use mumbot::{Bot, BotConfig, MessageCheck, UserCheck, env};
-use mumcord_protocol::{DenyKind, permissions};
 
 fn live() -> bool {
     let on = std::env::var("MUMBOT_LIVE").is_ok_and(|v| v == "1");

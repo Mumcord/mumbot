@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use mumcord_protocol::{DenyKind, Event, Handle, ServerState, TextTarget, permissions};
+use mumble_client_protocol::{DenyKind, Event, Handle, ServerState, TextTarget, permissions};
 use tokio::sync::{Mutex, OnceCell, broadcast};
 
 use crate::avatar::{self, AvatarSource};

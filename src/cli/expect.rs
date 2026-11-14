@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
 use clap::Subcommand;
+use mumble_client_protocol::{DenyKind, permissions};
 use mumbot::{Bot, MessageCheck, UserCheck};
-use mumcord_protocol::{DenyKind, permissions};
 
 #[derive(Subcommand, Debug)]
 pub enum Expect {

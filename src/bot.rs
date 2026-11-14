@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
-use mumcord_protocol::{
+use mumble_client_protocol::{
     ConnectConfig, DisconnectReason, Event, Handle, PermissionDenied, ServerState, TextMessage,
     TextTarget, User, connect, proto,
 };

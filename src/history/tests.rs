@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 
 use bytes::Bytes;
-use mumcord_protocol::{
+use mumble_client_protocol::{
     Channel, DisconnectReason, Event, PluginData, ServerState, TextMessage, TextTarget, User,
     UserChange,
 };
@@ -247,7 +247,7 @@ impl Holder {
             self.now += 100;
             self.core.tick(self.now);
             for (to, data) in self.core.take_outgoing(self.now) {
-                assert!(data.len() <= mumcord_protocol::PLUGIN_DATA_MAX);
+                assert!(data.len() <= mumble_client_protocol::PLUGIN_DATA_MAX);
                 out.push((to, wire::decode(&data).expect("valid packet")));
             }
         }
@@ -261,6 +261,7 @@ impl Holder {
                 joined: true,
                 moved_from: None,
                 actor: None,
+                echoed_rights: 0,
             }),
             self.now,
         );
@@ -706,6 +707,7 @@ impl Holder {
                 joined: false,
                 moved_from: None,
                 actor: None,
+                echoed_rights: 0,
             }),
             self.now,
         );

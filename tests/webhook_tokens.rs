@@ -12,11 +12,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
+use mumble_client_protocol::proto;
 use mumbot::webhook::{
     Api, ApiKey, BotApi, ChannelRef, ChannelToken, HttpConfig, ServerConfig, WebhookConfig,
 };
 use mumbot::{Bot, BotConfig, MessageCheck, UserCheck, env};
-use mumcord_protocol::proto;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const WAIT: Duration = Duration::from_secs(20);
