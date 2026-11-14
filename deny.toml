@@ -1,0 +1,38 @@
+# cargo-deny configuration: advisories, licences, banned and duplicate crates, and sources.
+# Run `cargo deny check`; CI does the same.
+
+[advisories]
+version = 2
+yanked = "deny"
+
+[licenses]
+version = 2
+# Mumbot itself is AGPL-3.0-only (and so are the Mumcord crates it uses); everything else must be
+# permissive, plus MPL-2.0 (file-level copyleft).
+allow = [
+    "AGPL-3.0-only",
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BlueOak-1.0.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+# Temporary [patch.crates-io] in Cargo.toml: the Mumcord crates from a branch of the sister project
+# until their release. Remove this entry together with that patch block.
+allow-git = ["https://github.com/Mumcord/mumcord"]
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
