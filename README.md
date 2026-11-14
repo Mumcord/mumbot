@@ -342,6 +342,16 @@ cargo build --release                     # mumbot, needs CMake (builds Opus for
 cargo build --release --features tester   # mumbot-tester
 ```
 
+### Building on FreeBSD
+
+`mumble-client-protocol` compiles the Mumble protobuf messages while it builds. Linux, macOS and
+Windows get a bundled `protoc`; FreeBSD has none, so the build uses the one from the system
+(`PROTOC`, or a `protoc` on the `PATH`):
+
+```bash
+pkg install protobuf
+```
+
 ## Part of the Mumcord family
 
 | | |
