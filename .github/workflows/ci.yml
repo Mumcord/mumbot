@@ -20,6 +20,7 @@ env:
   CARGO_TERM_COLOR: always
   # No debug info: CI only needs pass/fail, and it makes linking faster and the caches smaller.
   CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_DENY_VERSION: 0.20.2
 
 jobs:
   # Decides whether the heavy jobs run. A path filter on the trigger would leave the required
@@ -321,21 +322,46 @@ jobs:
              cargo zigbuild --release --locked --target aarch64-unknown-linux-musl --features tester'
           file target/aarch64-unknown-linux-musl/release/mumbot | tee /dev/stderr | grep -q 'ARM aarch64.*statically linked'
 
+  deny:
+    name: Dependency checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+
+      - name: Restore cargo-deny
+        id: deny
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-deny
+          key: cargo-deny-${{ runner.os }}-${{ runner.arch }}-${{ env.CARGO_DENY_VERSION }}
+
+      - name: Install cargo-deny
+        if: steps.deny.outputs.cache-hit != 'true'
+        run: cargo install --locked cargo-deny --version "$CARGO_DENY_VERSION"
+
+      - name: Advisories, licences, bans and sources
+        run: cargo deny check
+
   # The one required status check. Runs even when the heavy jobs were skipped (no code change),
   # because a skipped job would not report its name.
   result:
     name: CI result
-    needs: [changes, test, live, peer-live, docker, examples, static-arm64]
+    needs: [changes, test, live, peer-live, docker, examples, static-arm64, deny]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Check results
         run: |
-          echo "changes: $CHANGES, test: $TEST, live: $LIVE, peer-live: $PEERLIVE, docker: $DOCKER, examples: $EXAMPLES, static-arm64: $ARM64"
+          echo "changes: $CHANGES, test: $TEST, live: $LIVE, peer-live: $PEERLIVE, docker: $DOCKER, examples: $EXAMPLES, static-arm64: $ARM64, deny: $DENY"
           ok() { [ "$1" = success ] || [ "$1" = skipped ]; }
           [ "$CHANGES" = success ] && ok "$TEST" && ok "$LIVE" && ok "$PEERLIVE" && ok "$DOCKER" && ok "$EXAMPLES" \
-            && ok "$ARM64"
+            && ok "$ARM64" && [ "$DENY" = success ]
         env:
           CHANGES: ${{ needs.changes.result }}
           TEST: ${{ needs.test.result }}
@@ -344,3 +370,4 @@ jobs:
           DOCKER: ${{ needs.docker.result }}
           EXAMPLES: ${{ needs.examples.result }}
           ARM64: ${{ needs.static-arm64.result }}
+          DENY: ${{ needs.deny.result }}
