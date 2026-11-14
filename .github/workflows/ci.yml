@@ -347,21 +347,68 @@ jobs:
       - name: Advisories, licences, bans and sources
         run: cargo deny check
 
+  # Keeps scripts/generate-sbom.sh working between releases (release.yml runs it on a tag).
+  sbom:
+    name: SBOM
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read tool versions
+        id: tools
+        run: grep '^[A-Z_]*=' scripts/sbom-tools.env >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+
+      - name: Restore cargo-cyclonedx
+        id: cyclonedx
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-cyclonedx
+          key: cargo-cyclonedx-${{ runner.os }}-${{ runner.arch }}-${{ steps.tools.outputs.CARGO_CYCLONEDX_VERSION }}
+
+      - name: Install cargo-cyclonedx
+        if: steps.cyclonedx.outputs.cache-hit != 'true'
+        env:
+          CARGO_CYCLONEDX_VERSION: ${{ steps.tools.outputs.CARGO_CYCLONEDX_VERSION }}
+        run: cargo install --locked cargo-cyclonedx --version "$CARGO_CYCLONEDX_VERSION"
+
+      - name: Generate the SBOMs
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          scripts/generate-sbom.sh "$version" sbom
+
+      # Six files (two variants, three platforms), each with a named and versioned root, the
+      # crates and both bundled C libraries.
+      - name: Check the SBOMs
+        run: |
+          [ "$(ls sbom/*.cdx.json | wc -l)" -eq 6 ]
+          for f in sbom/*.cdx.json; do
+            jq -e '.bomFormat == "CycloneDX" and .specVersion == "1.5"
+              and (.metadata.component | (.name | startswith("mumbot")) and (.version | length > 0))
+              and (.components | length > 100)
+              and ([.components[] | select(."bom-ref" | startswith("native:")) | .name] | sort == ["opus", "sqlite"])' \
+              "$f" >/dev/null || { echo "::error::$f is not a complete SBOM"; exit 1; }
+          done
+
   # The one required status check. Runs even when the heavy jobs were skipped (no code change),
   # because a skipped job would not report its name.
   result:
     name: CI result
-    needs: [changes, test, live, peer-live, docker, examples, static-arm64, deny]
+    needs: [changes, test, live, peer-live, docker, examples, static-arm64, deny, sbom]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Check results
         run: |
-          echo "changes: $CHANGES, test: $TEST, live: $LIVE, peer-live: $PEERLIVE, docker: $DOCKER, examples: $EXAMPLES, static-arm64: $ARM64, deny: $DENY"
+          echo "changes: $CHANGES, test: $TEST, live: $LIVE, peer-live: $PEERLIVE, docker: $DOCKER, examples: $EXAMPLES, static-arm64: $ARM64, deny: $DENY, sbom: $SBOM"
           ok() { [ "$1" = success ] || [ "$1" = skipped ]; }
           [ "$CHANGES" = success ] && ok "$TEST" && ok "$LIVE" && ok "$PEERLIVE" && ok "$DOCKER" && ok "$EXAMPLES" \
-            && ok "$ARM64" && [ "$DENY" = success ]
+            && ok "$ARM64" && [ "$DENY" = success ] && [ "$SBOM" = success ]
         env:
           CHANGES: ${{ needs.changes.result }}
           TEST: ${{ needs.test.result }}
@@ -371,3 +418,4 @@ jobs:
           EXAMPLES: ${{ needs.examples.result }}
           ARM64: ${{ needs.static-arm64.result }}
           DENY: ${{ needs.deny.result }}
+          SBOM: ${{ needs.sbom.result }}
