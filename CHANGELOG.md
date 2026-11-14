@@ -17,9 +17,18 @@ All notable changes to Mumbot are listed here. The format follows
 
 - The Mumble protocol code now comes from the `mumble-client-protocol` crate (0.1), the
   standalone successor of `mumcord-protocol`, which gets no more updates. Nothing changes for
-  servers or users: the bot still shows itself as `Mumbot <version>`. `mumcord-p2p` keeps its
-  own copy of the old crate until its 0.9.0 release; the bot only uses its message types, so the
-  two never meet.
+  servers or users: the bot still shows itself as `Mumbot <version>`. `mumcord-p2p` builds on
+  the new crate as well, so the old one is gone from the build.
+- Building Mumbot from source now needs Rust 1.97 or newer (before: 1.90), because the Mumcord
+  crates it builds on require it. The release binaries and Docker images are not affected.
+
+### Fixed
+
+- FreeBSD (issue #64): the build no longer fails because the protocol crate finds no bundled
+  `protoc`. The old `mumcord-protocol` crate, which insisted on a bundled one, is gone from the
+  build; `mumble-client-protocol` takes the compiler from `PROTOC` or from the system when
+  nothing is bundled, so `pkg install protobuf` is all FreeBSD needs on top of the usual build
+  tools before `cargo build --release`.
 
 ## [0.5.4] - 2026-11-10
 

@@ -5,6 +5,12 @@ FROM --platform=${BUILDPLATFORM:-linux/amd64} ghcr.io/rust-cross/cargo-zigbuild:
 ARG TARGETARCH
 # Empty for the main bot, "tester" for the mumbot-tester image (spec 03, FR-3.12).
 ARG FEATURES=""
+# The builder image ships an older Rust than Cargo.toml's `rust-version` allows, so the build
+# installs its own. ci.yml and release.yml read the version from this line for their static builds.
+ARG RUST_TOOLCHAIN=1.97.1
+RUN rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal \
+      --target x86_64-unknown-linux-musl --target aarch64-unknown-linux-musl \
+    && rustup default "$RUST_TOOLCHAIN"
 # The Opus codec (C, behind mumcord-audio) is built with CMake.
 RUN apt-get update -qq \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends cmake \

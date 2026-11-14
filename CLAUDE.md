@@ -38,7 +38,7 @@ Everything is in English: chat, specs, docs, code, comments, commit messages and
 
 ## Stack
 
-- **Language:** Rust (edition 2024, MSRV 1.90), one crate `mumbot` (library + `mumbot` binary).
+- **Language:** Rust (edition 2024, MSRV 1.97), one crate `mumbot` (library + `mumbot` binary).
 - **Mumble protocol and voice:** `mumble-client-protocol` (the Mumble wire protocol, extracted from Mumcord) and `mumcord-codec` (Opus, no device I/O, published by `Mumcord/mumcord`), both from crates.io; a version bump (by hand or a Dependabot pull request) must pass the live tests.
 - **Async runtime:** tokio. TLS: rustls with ring (via `mumble-client-protocol`).
 - **HTTP:** the webhook API is a small HTTP/1.1 handler on `tokio::net` (no web framework), JSON via serde/serde_json.
