@@ -19,6 +19,8 @@ All notable changes to Mumbot are listed here. The format follows
   standalone successor of `mumcord-protocol`, which gets no more updates. Nothing changes for
   servers or users: the bot still shows itself as `Mumbot <version>`. `mumcord-p2p` builds on
   the new crate as well, so the old one is gone from the build.
+- Building Mumbot from source now needs Rust 1.97 or newer (before: 1.90), because the Mumcord
+  crates it builds on require it. The release binaries and Docker images are not affected.
 
 ### Fixed
 

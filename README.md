@@ -8,7 +8,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-AGPL--3.0-blue" alt="Licence: AGPL-3.0" /></a>
   <a href="https://github.com/Mumcord/mumbot/pkgs/container/mumbot"><img src="https://img.shields.io/badge/image-ghcr.io%2Fmumcord%2Fmumbot-2496ED?logo=docker&logoColor=white" alt="Docker image ghcr.io/mumcord/mumbot" /></a>
   <a href="https://github.com/Mumcord/mumbot/pkgs/container/mumbot-tester"><img src="https://img.shields.io/badge/image-ghcr.io%2Fmumcord%2Fmumbot--tester-2496ED?logo=docker&logoColor=white" alt="Docker image ghcr.io/mumcord/mumbot-tester" /></a>
-  <a href="Cargo.toml"><img src="https://img.shields.io/badge/rust-1.90%2B-b7410e?logo=rust" alt="Rust 1.90 or newer" /></a>
+  <a href="Cargo.toml"><img src="https://img.shields.io/badge/rust-1.97%2B-b7410e?logo=rust" alt="Rust 1.97 or newer" /></a>
 </p>
 
 <p align="center">
@@ -335,7 +335,7 @@ the same script on every change. To try it locally, install the pinned tool
 (`cargo install cargo-cyclonedx --version <version from scripts/sbom-tools.env> --locked`, plus
 `jq`) and run `scripts/generate-sbom.sh 0.0.0 out`. Nothing is compiled.
 
-From source (Rust 1.90+):
+From source (Rust 1.97+):
 
 ```bash
 cargo build --release                     # mumbot, needs CMake (builds Opus for the music module)
@@ -351,6 +351,9 @@ Windows get a bundled `protoc`; FreeBSD has none, so the build uses the one from
 ```bash
 pkg install protobuf
 ```
+
+The build needs Rust 1.97 or newer. If the `rust` package of your FreeBSD release is older, install
+a current toolchain with [rustup](https://rustup.rs) (`pkg install rustup-init`).
 
 ## Part of the Mumcord family
 
