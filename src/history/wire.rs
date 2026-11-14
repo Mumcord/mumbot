@@ -21,7 +21,7 @@
 //! chunked. Everything received is untrusted: the decoder checks sizes and shapes, the
 //! session logic checks that it answers an own request.
 
-use mumcord_protocol::PLUGIN_DATA_MAX;
+use mumble_client_protocol::PLUGIN_DATA_MAX;
 use serde::{Deserialize, Serialize};
 
 use super::proof::{MAC_LEN, MAX_PROOFS, Mac, Nonce};

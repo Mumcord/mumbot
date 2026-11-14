@@ -6,10 +6,10 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use bytes::BytesMut;
+use mumble_client_protocol::voice::{OutgoingAudio, VoiceEvent, VoiceTransport};
+use mumble_client_protocol::{Event, Handle};
 use mumcord_codec::Frame;
 use mumcord_codec::codec::{MAX_PACKET_BYTES, OpusEncoder, PacketDuration};
-use mumcord_protocol::voice::{OutgoingAudio, VoiceEvent, VoiceTransport};
-use mumcord_protocol::{Event, Handle};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 

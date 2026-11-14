@@ -25,7 +25,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use mumcord_protocol::{Event, ServerState, TextMessage, User};
+use mumble_client_protocol::{Event, ServerState, TextMessage, User};
 
 use super::config::HistoryConfig;
 use super::hash::{Content, content_hash};

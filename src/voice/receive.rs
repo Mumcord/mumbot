@@ -3,9 +3,9 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
+use mumble_client_protocol::VoicePacket;
 use mumcord_codec::FRAME_SAMPLES;
 use mumcord_codec::codec::{MAX_DECODED_SAMPLES, OpusDecoder};
-use mumcord_protocol::VoicePacket;
 
 use super::analysis::{duration_of, peak_window_db};
 

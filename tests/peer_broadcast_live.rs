@@ -26,13 +26,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use mumble_client_protocol::proto;
 use mumbot::peer::{BroadcastError, HttpRelay, PeerConfig, RelayApi, Secret};
 use mumbot::protocol::Event;
 use mumbot::voice_settings::VoiceSettings;
 use mumbot::webhook::{ModulesConfig, ServerConfig, WebhookConfig};
 use mumbot::{Bot, BotConfig, Module, UserCheck, env, modules};
 use mumcord_p2p::BroadcastId;
-use mumcord_protocol::proto;
 use rustls::pki_types::CertificateDer;
 use rustls::pki_types::pem::PemObject;
 use tokio::sync::broadcast;

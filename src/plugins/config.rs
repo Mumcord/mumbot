@@ -65,11 +65,11 @@ impl PluginsConfig {
         }
         // The largest counter the message can carry, so it never grows past the limit later.
         let size = wire::encode(u32::MAX, &self.suggestions()).len();
-        if size > mumcord_protocol::PLUGIN_DATA_MAX {
+        if size > mumble_client_protocol::PLUGIN_DATA_MAX {
             bail!(
                 "[plugins] announcement is {size} bytes, more than the {} a plugin data message \
                  may carry: shorten the addresses or `for` texts, or announce fewer plugins",
-                mumcord_protocol::PLUGIN_DATA_MAX
+                mumble_client_protocol::PLUGIN_DATA_MAX
             );
         }
         Ok(())

@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::bail;
 use bytes::Bytes;
-use mumcord_protocol::{DisconnectReason, PluginData, User};
+use mumble_client_protocol::{DisconnectReason, PluginData, User};
 
 use super::*;
 

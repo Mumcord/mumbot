@@ -18,9 +18,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow, bail};
+use mumble_client_protocol::Handle;
+use mumble_client_protocol::voice::{Transport, VoiceEvent, VoicePacket, VoiceTransport};
 use mumcord_codec::{FRAME_SAMPLES, Frame};
-use mumcord_protocol::Handle;
-use mumcord_protocol::voice::{Transport, VoiceEvent, VoicePacket, VoiceTransport};
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;

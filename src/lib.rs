@@ -1,4 +1,4 @@
-//! Mumbot: headless bots that are ordinary Mumble clients built on `mumcord-protocol`, so they
+//! Mumbot: headless bots that are ordinary Mumble clients built on `mumble-client-protocol`, so they
 //! work against any unmodified standard Mumble server.
 //!
 //! [`Bot`] is the shared core (connect, persistent certificate, waiting on server state). Built on
@@ -33,4 +33,4 @@ pub use bot::{Bot, BotConfig, DEFAULT_TIMEOUT};
 #[cfg(feature = "tester")]
 pub use checks::{MessageCheck, UserCheck};
 pub use modules::Module;
-pub use mumcord_protocol as protocol;
+pub use mumble_client_protocol as protocol;

@@ -195,7 +195,7 @@ async fn main() -> Result<()> {
         .init();
     // Only module runs are bots; the scripted test bot keeps the default release so it shows as
     // a regular Mumcord user (Mumcord issue #458).
-    mumcord_protocol::set_client_release(hello::client_release());
+    mumble_client_protocol::set_client_release(hello::client_release());
     let config = Arc::new(WebhookConfig::load(&config_path, choice)?);
     // Checked now so a bad value stops the start, not the first voice a module sends.
     let music = config.music.as_ref().map(|music| music.voice());

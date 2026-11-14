@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::time::Duration;
 
-use mumcord_protocol::proto;
+use mumble_client_protocol::proto;
 
 /// Shortest time between two ACL queries.
 pub const MIN_READ_INTERVAL: Duration = Duration::from_secs(10);
