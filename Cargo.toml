@@ -77,9 +77,10 @@ lto = "thin"
 codegen-units = 1
 strip = true
 
-# The media-profile branch of the Mumcord client carries the new `media` fields
-# (FR-7.96). Retag this block with the Mumcord 0.9.0 release.
+# The 0.9.0 milestone branch of the Mumcord client carries the new `media` fields (FR-7.96),
+# and its mumcord-p2p builds on mumble-client-protocol, so the old mumcord-protocol crate (whose
+# build script needs a bundled protoc, issue #64) is no longer in the tree. Retag this block
+# with the Mumcord 0.9.0 release.
 [patch.crates-io]
-mumcord-protocol = { git = "https://github.com/Mumcord/mumcord", branch = "feat/d4-relay-capabilities" }
-mumcord-codec = { git = "https://github.com/Mumcord/mumcord", branch = "feat/d4-relay-capabilities" }
-mumcord-p2p = { git = "https://github.com/Mumcord/mumcord", branch = "feat/d4-relay-capabilities" }
+mumcord-codec = { git = "https://github.com/Mumcord/mumcord", branch = "milestone/0.9.0" }
+mumcord-p2p = { git = "https://github.com/Mumcord/mumcord", branch = "milestone/0.9.0" }
