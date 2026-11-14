@@ -316,9 +316,13 @@ jobs:
 
       - name: Build (same command as release.yml)
         run: |
+          toolchain="$(sed -n 's/^ARG RUST_TOOLCHAIN=//p' Dockerfile)"
+          test -n "$toolchain"
           docker run --rm -v "$PWD:/io" -w /io -e DEBIAN_FRONTEND=noninteractive \
+            -e RUSTUP_TOOLCHAIN="$toolchain" \
             ghcr.io/rust-cross/cargo-zigbuild:0.24.0 sh -c \
-            'apt-get update -qq && apt-get install -y -qq --no-install-recommends cmake >/dev/null &&
+            'rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --target aarch64-unknown-linux-musl &&
+             apt-get update -qq && apt-get install -y -qq --no-install-recommends cmake >/dev/null &&
              cargo zigbuild --release --locked --target aarch64-unknown-linux-musl --features tester'
           file target/aarch64-unknown-linux-musl/release/mumbot | tee /dev/stderr | grep -q 'ARM aarch64.*statically linked'
 

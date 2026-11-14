@@ -82,12 +82,18 @@ jobs:
 
       # Static musl binaries, cross-compiled with zig in the same builder image as the Dockerfile
       # (keep the two tags in sync; Dependabot only updates the Dockerfile). CMake builds Opus.
+      # The image's Rust is older than Cargo.toml's rust-version, so the build installs the
+      # toolchain the Dockerfile pins.
       - name: Build (Linux)
         if: runner.os == 'Linux'
         run: |
+          toolchain="$(sed -n 's/^ARG RUST_TOOLCHAIN=//p' Dockerfile)"
+          test -n "$toolchain"
           docker run --rm -v "$PWD:/io" -w /io -e DEBIAN_FRONTEND=noninteractive \
+            -e RUSTUP_TOOLCHAIN="$toolchain" \
             ghcr.io/rust-cross/cargo-zigbuild:0.24.0 sh -c \
-            "apt-get update -qq && apt-get install -y -qq --no-install-recommends cmake >/dev/null &&
+            "rustup toolchain install $toolchain --profile minimal --target ${{ matrix.target }} &&
+             apt-get update -qq && apt-get install -y -qq --no-install-recommends cmake >/dev/null &&
              cargo zigbuild --release --locked --target ${{ matrix.target }} $FEATURES"
           mkdir -p out && cp target/${{ matrix.target }}/release/mumbot out/
 
