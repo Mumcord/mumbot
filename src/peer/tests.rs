@@ -86,6 +86,7 @@ impl RelayApi for Arc<MockRelay> {
         publisher: &str,
         max_viewers: u16,
         relay_use: RelayUse,
+        _media: bool,
     ) -> Result<NewBroadcast, BroadcastError> {
         let kind = match relay_use {
             RelayUse::ScreenShare => String::new(),
@@ -241,6 +242,7 @@ fn status(boot_id: &str) -> Status {
         uses: None,
         broadcast: None,
         plugin_data: None,
+        media: 0,
     }
 }
 
@@ -794,6 +796,13 @@ async fn sharing() -> Setup {
     s
 }
 
+fn bcast_req_media(sender: u32) -> Event {
+    peer_message(
+        sender,
+        &format!(r#"{{"v":1,"t":"bcast-req","rid":"{RID}","max":25,"mv":2}}"#),
+    )
+}
+
 fn only_error(s: &Setup, to: u32) -> String {
     let sent = s.link.take_sent();
     assert_eq!(sent.len(), 1, "{sent:?}");
@@ -826,6 +835,35 @@ async fn a_sharer_gets_a_broadcast_for_its_certificate() {
         vec!["create a1 25", "delete 00000000000000b1"]
     );
     assert_eq!(s.link.take_sent()[0].1["id"], "00000000000000b2");
+}
+
+#[tokio::test]
+async fn the_media_version_passes_through_status_and_broadcast() {
+    let mut s = setup();
+    let mut relay = status("one");
+    relay.media = 2;
+    *s.relay.status.lock().expect("lock") = Some(relay);
+    s.peer.check_status().await;
+    let now = Instant::now();
+    s.peer.on_event(screen_hello(ALICE), now).await;
+    let announced = s.link.take_sent();
+    let relay = announced
+        .iter()
+        .find(|(_, message)| message["t"] == "relay")
+        .expect("relay announcement");
+    assert_eq!(relay.1["mv"], 2);
+
+    s.peer.on_event(bcast_req_media(ALICE), now).await;
+    let sent = s.link.take_sent();
+    assert_eq!(sent[0].1["t"], "bcast");
+    assert_eq!(sent[0].1["mv"], 2);
+
+    s.peer.on_event(screen_hello(BOB), now).await;
+    s.link.take_sent();
+    s.peer.on_event(admit(ALICE, BOB), now).await;
+    let sent = s.link.take_sent();
+    assert_eq!(sent[0].1["t"], "bcast-tok");
+    assert_eq!(sent[0].1["mv"], 2);
 }
 
 #[tokio::test]

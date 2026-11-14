@@ -46,8 +46,9 @@ pub use relay::{
 
 use broadcast::{Broadcasts, Cleanup};
 use wire::{
-    BroadcastErrorReason as BcastError, BroadcastId, BroadcastKind, PeerMessage, RelayAnnouncement,
-    RelayState as State, RelayToken, RelayUse, RequestId, TokenErrorReason as TokenError,
+    BroadcastErrorReason as BcastError, BroadcastId, BroadcastKind, MEDIA_VERSION, PeerMessage,
+    RelayAnnouncement, RelayState as State, RelayToken, RelayUse, RequestId,
+    TokenErrorReason as TokenError,
 };
 
 /// A `token-req`: the sender wants a relay token for itself and session `peer`.
@@ -524,6 +525,7 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
             // A guest gets no token when groups are configured either: group members are
             // registered users.
             registered_only: self.rules.registered_only || !self.rules.allowed_groups.is_empty(),
+            media: status.media >= MEDIA_VERSION,
         }))
     }
 
@@ -590,10 +592,17 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
                 };
                 self.on_request(sender, request, now).await;
             }
-            PeerMessage::BroadcastRequest { rid, max, kind } => {
+            PeerMessage::BroadcastRequest {
+                rid,
+                max,
+                kind,
+                media,
+            } => {
                 // A request without a kind comes from a client older than plugin data.
                 let kind = kind.unwrap_or(RelayUse::ScreenShare);
-                let result = self.create_broadcast(sender, rid, max, kind, now).await;
+                let result = self
+                    .create_broadcast(sender, rid, max, kind, media, now)
+                    .await;
                 self.answer(sender, rid, result).await;
             }
             PeerMessage::BroadcastAdmit { rid, id, viewer } => {
@@ -630,6 +639,7 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
         rid: RequestId,
         max: u16,
         kind: RelayUse,
+        media: bool,
         now: Instant,
     ) -> Result<(u32, PeerMessage), BcastError> {
         if !self.bcast_limiter.allow(sender, now) {
@@ -662,7 +672,7 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
         if self.state != State::Up {
             return Err(BcastError::RelayDown);
         }
-        let created = match self.relay.create_broadcast(&cert, max, kind).await {
+        let created = match self.relay.create_broadcast(&cert, max, kind, media).await {
             Ok(created) => created,
             Err(BroadcastError::RelayFull) => return Err(BcastError::RelayFull),
             Err(BroadcastError::UseNotAllowed) => return Err(BcastError::UseNotAllowed),
@@ -679,7 +689,7 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
         };
         if let Some(old) = self
             .broadcasts
-            .insert(created.id, sender, cert, kind, channel)
+            .insert(created.id, sender, cert, kind, channel, media)
         {
             self.delete_broadcast(old).await;
         }
@@ -688,6 +698,7 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
             id: created.id,
             token,
             ttl: ttl(created.expires_in),
+            media,
         };
         Ok((sender, message))
     }
@@ -712,10 +723,12 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
             return Err(BcastError::RateLimited);
         }
         let users = self.link.users().await.ok_or(BcastError::RelayDown)?;
-        let (publisher_cert, kind) = match self.broadcasts.get(id) {
-            Some(broadcast) if broadcast.publisher == sender => {
-                (broadcast.publisher_cert.clone(), broadcast.kind)
-            }
+        let (publisher_cert, kind, media) = match self.broadcasts.get(id) {
+            Some(broadcast) if broadcast.publisher == sender => (
+                broadcast.publisher_cert.clone(),
+                broadcast.kind,
+                broadcast.media,
+            ),
             _ => return Err(BcastError::Denied),
         };
         if self
@@ -776,6 +789,7 @@ impl<R: RelayApi, L: Link> Peer<R, L> {
             ttl: ttl(granted.expires_in),
             sharer: sender,
             kind: broadcast_kind,
+            media,
         };
         Ok((viewer, message))
     }

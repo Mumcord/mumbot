@@ -187,6 +187,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bovnar"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "383c7c867024f6178db5b66810e9f5b69ef5ea9a35e957d45d1b41286549245c"
+dependencies = [
+ "cc",
+ "num-bigint",
+ "num-integer",
+ "num-rational",
+ "num-traits",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1221,9 +1234,8 @@ dependencies = [
 
 [[package]]
 name = "mumcord-codec"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef9f223a355979948f48314208264e7ef7eb411f435ce768fef52c2e964a4bb6"
+version = "0.7.2"
+source = "git+https://github.com/Mumcord/mumcord?branch=feat%2Fd4-relay-capabilities#7794576b5b9aec9e49d64b54e4fb6764efbe35ef"
 dependencies = [
  "nnnoiseless",
  "opus",
@@ -1236,9 +1248,9 @@ dependencies = [
 [[package]]
 name = "mumcord-p2p"
 version = "0.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "baff7c5abff8826b814d9c1320f66753a18ea461e5b182ad53eefa64a676012c"
+source = "git+https://github.com/Mumcord/mumcord?branch=feat%2Fd4-relay-capabilities#7794576b5b9aec9e49d64b54e4fb6764efbe35ef"
 dependencies = [
+ "bovnar",
  "bytes",
  "crab_nat",
  "igd-next",
@@ -1260,8 +1272,7 @@ dependencies = [
 [[package]]
 name = "mumcord-protocol"
 version = "0.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aff4e5eaacfa0469331ae496581b815f311f131ab60b0fab7d8d8b76b8a3e63b"
+source = "git+https://github.com/Mumcord/mumcord?branch=feat%2Fd4-relay-capabilities#7794576b5b9aec9e49d64b54e4fb6764efbe35ef"
 dependencies = [
  "aes",
  "base64",
@@ -1392,6 +1403,17 @@ version = "0.1.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ce2d95d4b3734dc35aa2f45e1aa22cd416814592a4f9d9205e11affd5b8e10b"
 dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "num-rational"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f83d14da390562dca69fc84082e73e548e1ad308d24accdedd2720017cb37824"
+dependencies = [
+ "num-bigint",
+ "num-integer",
  "num-traits",
 ]
 

@@ -61,6 +61,9 @@ pub struct Status {
     /// Plugin data limits (Mumcord spec 09); absent on a relay without plugin data.
     #[serde(default)]
     pub plugin_data: Option<PluginDataStatus>,
+    /// The relay's media profile version (Mumcord FR-7.96); absent or 0 is the old format.
+    #[serde(default)]
+    pub media: u8,
 }
 
 /// The relay's broadcast limits from `GET /v1/status`.
@@ -227,6 +230,7 @@ pub trait RelayApi {
         publisher: &str,
         max_viewers: u16,
         relay_use: RelayUse,
+        media: bool,
     ) -> impl Future<Output = Result<NewBroadcast, BroadcastError>> + Send;
     /// Admits certificate hash `viewer` to broadcast `id`; admitting again replaces the token.
     fn admit_viewer(
@@ -387,6 +391,8 @@ struct BroadcastRequest<'a> {
     max_viewers: u16,
     #[serde(rename = "use", skip_serializing_if = "Option::is_none")]
     relay_use: Option<&'static str>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    media: bool,
 }
 
 #[derive(Deserialize)]
@@ -457,12 +463,14 @@ impl RelayApi for HttpRelay {
         publisher: &str,
         max_viewers: u16,
         relay_use: RelayUse,
+        media: bool,
     ) -> Result<NewBroadcast, BroadcastError> {
         check_hash(publisher, "broadcasts").map_err(BroadcastError::Unavailable)?;
         let body = serde_json::to_vec(&BroadcastRequest {
             publisher,
             max_viewers,
             relay_use: broadcast_use(relay_use),
+            media,
         })
         .map_err(|e| BroadcastError::Unavailable(e.into()))?;
         let answer = self
@@ -736,6 +744,7 @@ mod tests {
                 publisher: "p",
                 max_viewers: 8,
                 relay_use: broadcast_use(relay_use),
+                media: false,
             })
             .expect("encodes")
         };
@@ -764,6 +773,7 @@ mod tests {
             uses: None,
             broadcast: None,
             plugin_data: None,
+            media: 0,
         };
         assert_eq!(good.clone().validate().expect("valid").fp, "ab".repeat(32));
         let bad: [fn(&mut Status); 9] = [
