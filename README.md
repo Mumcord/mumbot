@@ -325,8 +325,8 @@ cargo build --release --features tester   # mumbot-tester
 | [mumpeer](https://github.com/Mumcord/mumpeer) | A relay that connects Mumcord clients when a direct link fails. |
 | **mumbot** | Friendly headless bots: webhooks, relay discovery, chat history, music, test automation. |
 
-mumbot is built on Mumcord's protocol and codec crates
-([`mumcord-protocol`](https://crates.io/crates/mumcord-protocol),
+mumbot is built on the `mumble-client-protocol` crate and Mumcord's codec crate
+([`mumble-client-protocol`](https://crates.io/crates/mumble-client-protocol),
 [`mumcord-codec`](https://crates.io/crates/mumcord-codec)), and Mumcord's end-to-end tests use its
 test bot. You do not need Mumcord: the bots work with any standard Mumble server.
 
