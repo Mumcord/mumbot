@@ -6,6 +6,13 @@ All notable changes to Mumbot are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Releases carry a software bill of materials (SBOM): one CycloneDX 1.5 JSON file per variant and
+  platform (`<variant>-<version>-<platform>.cdx.json`, also listed in `SHA256SUMS`) with the Rust
+  crates and the bundled C libraries (Opus, SQLite) compiled into that binary. See "Software bill
+  of materials" in the README.
+
 ### Changed
 
 - The Mumble protocol code now comes from the `mumble-client-protocol` crate (0.1), the

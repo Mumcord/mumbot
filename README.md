@@ -292,7 +292,8 @@ More: [docs/security.md](docs/security.md).
 ## Releases and variants
 
 Every release ships two variants. Both binaries are called `mumbot`; only the archive and image
-names differ. Check downloads against `SHA256SUMS` from the same release.
+names differ. Check downloads against `SHA256SUMS` from the same release; what each binary
+contains is listed in its [SBOM](#software-bill-of-materials-sbom).
 
 | | **mumbot** (main) | **mumbot-tester** |
 | --- | --- | --- |
@@ -309,6 +310,30 @@ names differ. Check downloads against `SHA256SUMS` from the same release.
   `/health`. Stable releases also get `latest`; pin a version tag.
 - The main build answers a test command with a pointer to the tester build (exit code 2).
 - The tester variant exists since 0.2.0 (see the note under [Modules](#modules)).
+
+### Software bill of materials (SBOM)
+
+Every release carries a [CycloneDX](https://cyclonedx.org) 1.5 JSON SBOM per variant and platform,
+named `<variant>-<version>-<platform>.cdx.json` and listed in `SHA256SUMS`:
+
+| SBOM platform | Covers |
+| --- | --- |
+| `linux` | Both static Linux archives (x86_64 and arm64, same contents) and the `mumbot` binary in the Docker images. |
+| `windows-x86_64` | The Windows archive. |
+| `macos-universal` | The macOS archive (both halves of the universal binary, same contents). |
+
+Each one lists what is compiled into that binary: the Rust crates with their versions, licences
+and checksums (from `Cargo.lock`, without build and test dependencies) and the C libraries built
+from bundled sources and linked statically, Opus (from the `opusic-sys` crate) and SQLite (from
+`libsqlite3-sys`). The `mumbot-tester` SBOMs also hold the crates of the `tester` feature. C code
+that is part of a crate itself (for example in `ring`) is covered by that crate's entry. Not
+listed: the Alpine base image of the Docker images (it only adds the health check's `wget`) and
+the operating system's own libraries on Windows and macOS.
+
+The release workflow generates them from the tagged commit with `scripts/generate-sbom.sh`; CI runs
+the same script on every change. To try it locally, install the pinned tool
+(`cargo install cargo-cyclonedx --version <version from scripts/sbom-tools.env> --locked`, plus
+`jq`) and run `scripts/generate-sbom.sh 0.0.0 out`. Nothing is compiled.
 
 From source (Rust 1.90+):
 
