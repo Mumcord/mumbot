@@ -6,6 +6,8 @@ All notable changes to Mumbot are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-15
+
 ### Added
 
 - Releases carry a software bill of materials (SBOM): one CycloneDX 1.5 JSON file per variant and
@@ -21,6 +23,9 @@ All notable changes to Mumbot are listed here. The format follows
   the new crate as well, so the old one is gone from the build.
 - Building Mumbot from source now needs Rust 1.97 or newer (before: 1.90), because the Mumcord
   crates it builds on require it. The release binaries and Docker images are not affected.
+- `mumcord-codec` and `mumcord-p2p` now come from the published 0.9 releases on crates.io
+  (before: a development branch of the Mumcord client), so the bot builds on the same wire
+  format as Mumcord 0.9.
 
 ### Fixed
 
