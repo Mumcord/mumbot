@@ -1226,7 +1226,7 @@ dependencies = [
 
 [[package]]
 name = "mumbot"
-version = "0.5.4"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -1256,8 +1256,9 @@ dependencies = [
 
 [[package]]
 name = "mumcord-codec"
-version = "0.8.0"
-source = "git+https://github.com/Mumcord/mumcord?branch=milestone%2F0.9.0#a35ad65eedaf4e2e78670e8a7f4dc8992979ecb0"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "44df9dbe24521500e3666cb1b2ce9955aa8903eae7ec45f17bae0025ac0e662a"
 dependencies = [
  "nnnoiseless",
  "opus",
@@ -1269,8 +1270,9 @@ dependencies = [
 
 [[package]]
 name = "mumcord-p2p"
-version = "0.8.0"
-source = "git+https://github.com/Mumcord/mumcord?branch=milestone%2F0.9.0#a35ad65eedaf4e2e78670e8a7f4dc8992979ecb0"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc85fe2eb2f13a3e660f4d825cf9bc81ee67b1e9be4ff7a269505209a8d2ba2e"
 dependencies = [
  "bovnar",
  "bytes",
