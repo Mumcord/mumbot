@@ -42,8 +42,8 @@ same in the official Mumble client and in [Mumcord](https://github.com/Mumcord/m
 | **`history`** | Stays online, records the chat of the channels you choose and hands it to Mumcord clients that were offline (history sync). | main + tester | [history.md](docs/history.md) |
 
 > [!NOTE]
-> Release 0.2.0 adds the `peer`, `history` and `music` modules, `mumbot run`, the `[voice]`
-> settings and the separate tester build.
+> What changed in each release is in the [changelog](CHANGELOG.md); the
+> [wiki](https://github.com/Mumcord/mumbot/wiki) is the friendly overview of every module.
 
 ## How it fits together
 
@@ -114,9 +114,9 @@ standard Mumble server next to the bot with one `docker compose up`.
 ### Main build, binary
 
 ```bash
-curl -LO https://github.com/Mumcord/mumbot/releases/download/v0.4.1/mumbot-0.4.1-linux-x86_64.tar.gz
-curl -LO https://github.com/Mumcord/mumbot/releases/download/v0.4.1/SHA256SUMS
-sha256sum -c SHA256SUMS --ignore-missing && tar xzf mumbot-0.4.1-linux-x86_64.tar.gz
+curl -LO https://github.com/Mumcord/mumbot/releases/download/v0.6.0/mumbot-0.6.0-linux-x86_64.tar.gz
+curl -LO https://github.com/Mumcord/mumbot/releases/download/v0.6.0/SHA256SUMS
+sha256sum -c SHA256SUMS --ignore-missing && tar xzf mumbot-0.6.0-linux-x86_64.tar.gz
 ./mumbot webhook --config bot.toml
 ```
 
@@ -148,16 +148,14 @@ local or throwaway servers.
 
 ## Running several modules
 
-Since 0.2.0:
-
 ```bash
 mumbot webhook --config bot.toml                          # one module
 mumbot peer --config bot.toml
 mumbot music --config bot.toml
 mumbot history --config bot.toml
 mumbot plugins --config bot.toml
-mumbot run --config bot.toml --modules webhook,peer,history,music # several, one connection, one bot user
-MUMBOT_MODULES=webhook,peer,history,music mumbot run --config bot.toml  # same, handy in Docker
+mumbot run --config bot.toml --modules webhook,peer,history,music,plugins # several, one connection, one bot user
+MUMBOT_MODULES=webhook,peer,history,music,plugins mumbot run --config bot.toml  # same, handy in Docker
 ```
 
 Or list them in `bot.toml` and run `mumbot run --config bot.toml`:
