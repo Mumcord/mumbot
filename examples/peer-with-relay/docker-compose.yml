@@ -23,7 +23,7 @@ services:
       retries: 30
 
   mumpeer:
-    image: ${MUMPEER_IMAGE:-ghcr.io/mumcord/mumpeer:0.1.0}
+    image: ${MUMPEER_IMAGE:-ghcr.io/mumcord/mumpeer:0.3.0}
     # The image reads its config from /config/mumpeer.toml (MUMPEER_CONFIG) and runs as an
     # unprivileged user; Docker lets it bind 443 inside its own network namespace.
     restart: unless-stopped
